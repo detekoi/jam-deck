@@ -12,7 +12,7 @@ import socket
 import argparse # Import argparse
 
 # Version information
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 # Set starting port for the server
 START_PORT = 8080
@@ -85,8 +85,18 @@ def get_apple_music_track():
                 return "true" & output_delimiter & songName & output_delimiter & artistName & output_delimiter & albumName & output_delimiter & hasArtwork
                 
             on error readErr
-                    -- Error reading track details
+                -- Fallback for macOS 26 Tahoe AutoPlay: try current stream title
+                try
+                    set streamTitle to current stream title
+                    if streamTitle is not missing value and streamTitle is not "" then
+                        -- Return fallback marker with raw stream title for server-side parsing
+                        return "fallback" & output_delimiter & streamTitle
+                    else
+                        return "false" & output_delimiter & "Error reading track: " & readErr
+                    end if
+                on error
                     return "false" & output_delimiter & "Error reading track: " & readErr
+                end try
                 end try
             else
                 -- Not playing but app is running
@@ -148,6 +158,35 @@ def get_apple_music_track():
             else:
                 print(f"Error: Unexpected number of parts from AppleScript when playing. Parts: {parts}")
                 return json.dumps({"playing": False, "error": "Malformed response from AppleScript (playing)"})
+        elif status == 'fallback':
+            # macOS 26 Tahoe AutoPlay fallback: parts[1] contains raw stream title (e.g., "Song — Artist")
+            raw_stream = parts[1] if len(parts) > 1 else ''
+            title = raw_stream.strip()
+            artist = ''
+
+            # Heuristic parsing: try common separators. Prefer title on the left for these.
+            separators = [" — ", " – ", " - ", " • ", " · ", " by "]
+            for sep in separators:
+                if sep in raw_stream:
+                    left, right = raw_stream.split(sep, 1)
+                    if sep == " by ":
+                        # "Song by Artist"
+                        title = left.strip()
+                        artist = right.strip()
+                    else:
+                        # Assume "Song — Artist"; if it's actually "Artist - Song", user still gets both fields
+                        title = left.strip()
+                        artist = right.strip()
+                    break
+
+            data = {
+                "playing": True,
+                "title": title,
+                "artist": artist,
+                "album": ""
+            }
+            # No reliable artwork in fallback
+            return json.dumps(data)
         elif status == 'false':
             # Not playing or error reading track
             error_message = parts[1] if len(parts) > 1 else "Unknown state"

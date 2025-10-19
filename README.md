@@ -146,6 +146,21 @@ In the settings menu:
 </details>
 
 <details>
+<summary>macOS 26 Tahoe: AutoPlay shows “Music information unavailable”</summary>
+
+- In macOS 26 Tahoe, Apple Music sometimes does not expose `current track` metadata to AppleScript during AutoPlay (infinite play) sessions. This affects many apps/scripts.
+- Jam Deck v1.1.4 adds a fallback that reads the Music app’s `current stream title` when this happens and attempts to parse Song/Artist. Artwork and album may be unavailable in this mode.
+- If you still see issues:
+  - Toggle AutoPlay off (queue panel → ∞ button) or start playback from your Library’s Songs/Albums.
+  - Ensure Jam Deck is updated and the server restarted.
+  - Open the overlay with `?debug=true` to view raw responses in the browser console.
+  - Report regressions with steps to reproduce.
+
+References: discussions from developer communities indicate Apple changed behavior for AutoPlay metadata in Tahoe.
+
+</details>
+
+<details>
 <summary>Permission errors</summary>
 
 - macOS may need permission to control Apple Music.
