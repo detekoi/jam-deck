@@ -2,7 +2,8 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import subprocess
 import json
-from urllib.parse import parse_qs, urlparse, unquote
+from urllib.parse import parse_qs, urlparse, unquote, quote_plus
+from urllib.request import urlopen, Request
 import os
 import sys
 import zmq
@@ -42,6 +43,64 @@ def signal_handler(sig, frame):
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
+
+# In-memory cache for iTunes artwork lookups to avoid repeated API calls
+# Key: "artist - title", Value: True (found & downloaded) or False (not found)
+_itunes_artwork_cache = {}
+
+def fetch_itunes_artwork(artist, title, album):
+    """Fetch album artwork from iTunes Search API as a fallback.
+    
+    Used when AppleScript can't retrieve artwork (e.g., macOS Tahoe streaming bug).
+    Downloads 600x600 artwork to /tmp/harmony_deck_cover.jpg.
+    Returns True if artwork was found and saved, False otherwise.
+    """
+    cache_key = f"{artist} - {title}"
+    
+    # Check cache first
+    if cache_key in _itunes_artwork_cache:
+        return _itunes_artwork_cache[cache_key]
+    
+    try:
+        # Search by artist + title for best match
+        search_term = f"{artist} {title}"
+        query = f"term={quote_plus(search_term)}&media=music&entity=song&limit=1"
+        url = f"https://itunes.apple.com/search?{query}"
+        
+        resp = urlopen(url, timeout=3)
+        data = json.loads(resp.read())
+        
+        if data.get("resultCount", 0) == 0:
+            print(f"iTunes artwork fallback: no results for '{search_term}'")
+            _itunes_artwork_cache[cache_key] = False
+            return False
+        
+        result = data["results"][0]
+        art_url = result.get("artworkUrl100", "")
+        if not art_url:
+            print(f"iTunes artwork fallback: no artwork URL in result for '{search_term}'")
+            _itunes_artwork_cache[cache_key] = False
+            return False
+        
+        # Upscale from 100x100 to 600x600
+        art_url = art_url.replace("100x100bb", "600x600bb")
+        
+        # Download the artwork
+        art_resp = urlopen(art_url, timeout=3)
+        art_data = art_resp.read()
+        
+        artwork_path = "/tmp/harmony_deck_cover.jpg"
+        with open(artwork_path, "wb") as f:
+            f.write(art_data)
+        
+        print(f"iTunes artwork fallback: found artwork for '{search_term}' ({len(art_data)} bytes)")
+        _itunes_artwork_cache[cache_key] = True
+        return True
+        
+    except Exception as e:
+        print(f"iTunes artwork fallback error: {e}")
+        _itunes_artwork_cache[cache_key] = False
+        return False
 
 # Function to get current Apple Music track via AppleScript
 def get_apple_music_track():
@@ -131,7 +190,11 @@ def get_apple_music_track():
                     "album": album
                 }
 
-                # Add artwork path if available
+                # Add artwork path if available (from AppleScript or iTunes fallback)
+                if not has_artwork:
+                    # Try iTunes Search API as fallback
+                    has_artwork = fetch_itunes_artwork(artist, title, album)
+                
                 if has_artwork:
                     # Generate timestamp for cache busting
                     try:

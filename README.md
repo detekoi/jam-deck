@@ -150,18 +150,21 @@ In the settings menu:
 
 **Partially fixed in macOS 26.3** (Bug report: FB19908171).
 
-As of macOS 26.3, Apple has partially fixed the AppleScript `current track` regression. Track metadata (title, artist, album) now works for all content, including streaming tracks not in your library. However, **album artwork** still cannot be retrieved for streaming tracks.
+As of macOS 26.3, Apple has partially fixed the AppleScript `current track` regression. Track metadata (title, artist, album) now works for all content, including streaming tracks not in your library. However, **album artwork** still cannot be retrieved via AppleScript for streaming tracks.
+
+**Automatic fallback:** Jam Deck automatically searches the iTunes Store for album artwork when AppleScript can't provide it. This works for most tracks but may not find very niche or region-restricted content.
 
 **What works:**
 - Song title, artist, and album for all tracks (library and streaming)
 - Album artwork for songs in your Music library
+- Album artwork via iTunes Store fallback for most streaming tracks
 
-**What doesn't work:**
-- Album artwork for Apple Music streaming tracks not in your library
+**What may not work:**
+- Album artwork for very niche or region-restricted streaming tracks not found on the iTunes Store
 
-**Workaround:**
+**Manual workaround** (for tracks not found on the iTunes Store):
 
-To get album artwork to display, add songs to your library:
+Add songs to your library for guaranteed artwork:
 1. Right-click on any song/album in Apple Music
 2. Select "Add to Library"
 3. Now play the song - artwork should display correctly
