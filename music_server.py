@@ -3,7 +3,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import subprocess
 import json
 from urllib.parse import parse_qs, urlparse, unquote, quote_plus
-from urllib.request import urlopen, Request
 import os
 import sys
 import zmq
@@ -54,6 +53,8 @@ def fetch_itunes_artwork(artist, title, album):
     Used when AppleScript can't retrieve artwork (e.g., macOS Tahoe streaming bug).
     Downloads 600x600 artwork to /tmp/harmony_deck_cover.jpg.
     Returns True if artwork was found and saved, False otherwise.
+    
+    Uses subprocess curl instead of urllib to avoid SSL issues in py2app bundles.
     """
     cache_key = f"{artist} - {title}"
     
@@ -67,16 +68,25 @@ def fetch_itunes_artwork(artist, title, album):
         query = f"term={quote_plus(search_term)}&media=music&entity=song&limit=1"
         url = f"https://itunes.apple.com/search?{query}"
         
-        resp = urlopen(url, timeout=3)
-        data = json.loads(resp.read())
+        # Use curl to avoid py2app SSL bundling issues
+        result = subprocess.run(
+            ['curl', '-s', '--max-time', '3', url],
+            capture_output=True, text=True, timeout=5
+        )
+        
+        if result.returncode != 0:
+            print(f"iTunes artwork fallback: curl failed for '{search_term}'")
+            _itunes_artwork_cache[cache_key] = False
+            return False
+        
+        data = json.loads(result.stdout)
         
         if data.get("resultCount", 0) == 0:
             print(f"iTunes artwork fallback: no results for '{search_term}'")
             _itunes_artwork_cache[cache_key] = False
             return False
         
-        result = data["results"][0]
-        art_url = result.get("artworkUrl100", "")
+        art_url = data["results"][0].get("artworkUrl100", "")
         if not art_url:
             print(f"iTunes artwork fallback: no artwork URL in result for '{search_term}'")
             _itunes_artwork_cache[cache_key] = False
@@ -85,15 +95,20 @@ def fetch_itunes_artwork(artist, title, album):
         # Upscale from 100x100 to 600x600
         art_url = art_url.replace("100x100bb", "600x600bb")
         
-        # Download the artwork
-        art_resp = urlopen(art_url, timeout=3)
-        art_data = art_resp.read()
-        
+        # Download the artwork image using curl
         artwork_path = "/tmp/harmony_deck_cover.jpg"
-        with open(artwork_path, "wb") as f:
-            f.write(art_data)
+        dl_result = subprocess.run(
+            ['curl', '-s', '--max-time', '3', '-o', artwork_path, art_url],
+            capture_output=True, timeout=5
+        )
         
-        print(f"iTunes artwork fallback: found artwork for '{search_term}' ({len(art_data)} bytes)")
+        if dl_result.returncode != 0:
+            print(f"iTunes artwork fallback: failed to download artwork for '{search_term}'")
+            _itunes_artwork_cache[cache_key] = False
+            return False
+        
+        file_size = os.path.getsize(artwork_path)
+        print(f"iTunes artwork fallback: found artwork for '{search_term}' ({file_size} bytes)")
         _itunes_artwork_cache[cache_key] = True
         return True
         
