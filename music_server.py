@@ -83,20 +83,9 @@ def get_apple_music_track():
                 
                 -- Return delimited string: playing_state|||title|||artist|||album|||has_artwork
                 return "true" & output_delimiter & songName & output_delimiter & artistName & output_delimiter & albumName & output_delimiter & hasArtwork
-                
+
             on error readErr
-                -- Fallback for macOS 26 Tahoe AutoPlay: try current stream title
-                try
-                    set streamTitle to current stream title
-                    if streamTitle is not missing value and streamTitle is not "" then
-                        -- Return fallback marker with raw stream title for server-side parsing
-                        return "fallback" & output_delimiter & streamTitle
-                    else
-                        return "false" & output_delimiter & "Error reading track: " & readErr
-                    end if
-                on error
-                    return "false" & output_delimiter & "Error reading track: " & readErr
-                end try
+                return "false" & output_delimiter & readErr
                 end try
             else
                 -- Not playing but app is running
@@ -133,7 +122,7 @@ def get_apple_music_track():
             if len(parts) == 5:
                 title, artist, album, has_artwork_str = parts[1], parts[2], parts[3], parts[4]
                 has_artwork = has_artwork_str.lower() == 'true'
-                
+
                 # Build the data dictionary
                 data = {
                     "playing": True,
@@ -141,7 +130,7 @@ def get_apple_music_track():
                     "artist": artist,
                     "album": album
                 }
-                
+
                 # Add artwork path if available
                 if has_artwork:
                     # Generate timestamp for cache busting
@@ -152,48 +141,23 @@ def get_apple_music_track():
                         # Handle case where artwork file might not exist when getting timestamp
                         print("Warning: Artwork file not found for timestamp, skipping artwork path.")
                         # Continue without artwork path, data dictionary is already populated
-                    
+
                 # Convert dictionary to JSON using Python's json module for correct escaping
                 return json.dumps(data)
             else:
                 print(f"Error: Unexpected number of parts from AppleScript when playing. Parts: {parts}")
                 return json.dumps({"playing": False, "error": "Malformed response from AppleScript (playing)"})
-        elif status == 'fallback':
-            # macOS 26 Tahoe AutoPlay fallback: parts[1] contains raw stream title (e.g., "Song — Artist")
-            raw_stream = parts[1] if len(parts) > 1 else ''
-            title = raw_stream.strip()
-            artist = ''
-
-            # Heuristic parsing: try common separators. Prefer title on the left for these.
-            separators = [" — ", " – ", " - ", " • ", " · ", " by "]
-            for sep in separators:
-                if sep in raw_stream:
-                    left, right = raw_stream.split(sep, 1)
-                    if sep == " by ":
-                        # "Song by Artist"
-                        title = left.strip()
-                        artist = right.strip()
-                    else:
-                        # Assume "Song — Artist"; if it's actually "Artist - Song", user still gets both fields
-                        title = left.strip()
-                        artist = right.strip()
-                    break
-
-            data = {
-                "playing": True,
-                "title": title,
-                "artist": artist,
-                "album": ""
-            }
-            # No reliable artwork in fallback
-            return json.dumps(data)
         elif status == 'false':
             # Not playing or error reading track
             error_message = parts[1] if len(parts) > 1 else "Unknown state"
-            print(f"Music app state: {error_message}")
-            # Return None for error if it's just "Not playing"
-            error_payload = error_message if "Error reading track" in error_message else None
-            return json.dumps({"playing": False, "error": error_payload})
+
+            if error_message != "Not playing":
+                print(f"Music app state: {error_message}")
+
+            if error_message == "Not playing":
+                return json.dumps({"playing": False, "error": None})
+            else:
+                return json.dumps({"playing": False, "error": error_message})
         elif status == 'not_running':
             # Music app not running
             error_message = parts[1] if len(parts) > 1 else "Music app not running"

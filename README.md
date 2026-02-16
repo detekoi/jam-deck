@@ -146,17 +146,31 @@ In the settings menu:
 </details>
 
 <details>
-<summary>macOS 26 Tahoe: AutoPlay shows “Music information unavailable”</summary>
+<summary>macOS 26 Tahoe: Album art missing for streaming tracks</summary>
 
-- In macOS 26 Tahoe, Apple Music sometimes does not expose `current track` metadata to AppleScript during AutoPlay (infinite play) sessions. This affects many apps/scripts.
-- Jam Deck v1.1.4 adds a fallback that reads the Music app’s `current stream title` when this happens and attempts to parse Song/Artist. Artwork and album may be unavailable in this mode.
-- If you still see issues:
-  - Toggle AutoPlay off (queue panel → ∞ button) or start playback from your Library’s Songs/Albums.
-  - Ensure Jam Deck is updated and the server restarted.
-  - Open the overlay with `?debug=true` to view raw responses in the browser console.
-  - Report regressions with steps to reproduce.
+**Partially fixed in macOS 26.3** (Bug report: FB19908171).
 
-References: discussions from developer communities indicate Apple changed behavior for AutoPlay metadata in Tahoe.
+As of macOS 26.3, Apple has partially fixed the AppleScript `current track` regression. Track metadata (title, artist, album) now works for all content, including streaming tracks not in your library. However, **album artwork** still cannot be retrieved for streaming tracks.
+
+**What works:**
+- Song title, artist, and album for all tracks (library and streaming)
+- Album artwork for songs in your Music library
+
+**What doesn't work:**
+- Album artwork for Apple Music streaming tracks not in your library
+
+**Workaround:**
+
+To get album artwork to display, add songs to your library:
+1. Right-click on any song/album in Apple Music
+2. Select "Add to Library"
+3. Now play the song - artwork should display correctly
+
+**Background:**
+
+The original macOS 26 Tahoe release broke `current track` entirely for streaming content (error -1728). This has been mostly fixed in 26.3 — track info works again, but artwork retrieval still fails with a "Parameter error" for non-library streaming tracks.
+
+This issue is being tracked in Apple's developer forums: https://developer.apple.com/forums/thread/798267
 
 </details>
 
