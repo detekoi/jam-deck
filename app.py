@@ -318,7 +318,7 @@ class JamDeckApp(rumps.App):
                 f"Version {VERSION}\n\n"
                 "Display your Apple Music tracks in OBS.\n\n"
                 "OBS Tip - Width: Recommended minimum 400px, Height: 140px\n\n"
-                "© 2025 Henry Manes"
+                "© 2026 Henry Manes"
             )
         )
 

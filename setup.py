@@ -35,7 +35,7 @@ OPTIONS = {
         'CFBundleVersion': '1.1.4', # CFBundleVersion: Internal build number
         'CFBundleShortVersionString': '1.1.4', # CFBundleShortVersionString: User-facing version number
         'NSAppleEventsUsageDescription': 'This app requires access to Apple Music to display current track information.',
-        'NSHumanReadableCopyright': '© 2025 Henry Manes',
+        'NSHumanReadableCopyright': '© 2026 Henry Manes',
         'LSUIElement': True,  # Makes the app a background agent with no dock icon
         'LSBackgroundOnly': False,  # Allows menu bar icon
     },
