@@ -289,8 +289,8 @@ class MusicHandler(BaseHTTPRequestHandler):
             
             # Add debugging for file resolution
             print(f"Static file requested: {path}")
-            print(f"Resolving to path: {file_path}")
-            print(f"File exists: {os.path.exists(file_path)}")
+            print(f"Resolving to path: {real_file_path}")
+            print(f"File exists: {os.path.exists(real_file_path)}")
             
             try:
                 with open(real_file_path, 'rb') as f:
