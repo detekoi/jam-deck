@@ -276,13 +276,24 @@ class MusicHandler(BaseHTTPRequestHandler):
                 file_name = path.lstrip('/')
                 file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), file_name)
             
+            # Prevent path traversal attacks
+            base_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
+            real_file_path = os.path.realpath(file_path)
+            if not real_file_path.startswith(base_dir + os.sep) and real_file_path != base_dir:
+                print(f"Blocked path traversal attempt: {path}")
+                self.send_response(403)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Forbidden')
+                return
+            
             # Add debugging for file resolution
             print(f"Static file requested: {path}")
             print(f"Resolving to path: {file_path}")
             print(f"File exists: {os.path.exists(file_path)}")
             
             try:
-                with open(file_path, 'rb') as f:
+                with open(real_file_path, 'rb') as f:
                     content = f.read()
                 
                 self.send_response(200)
@@ -367,11 +378,21 @@ class MusicHandler(BaseHTTPRequestHandler):
             font_file = path.split('/')[-1]
             font_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'fonts', font_file)
             
-            print(f"Serving font file: {font_path}")
+            # Prevent path traversal attacks
+            base_dir = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'fonts'))
+            real_font_path = os.path.realpath(font_path)
+            if not real_font_path.startswith(base_dir + os.sep):
+                self.send_response(403)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Forbidden')
+                return
+            
+            print(f"Serving font file: {real_font_path}")
             
             try:
                 # Open in binary mode for font files
-                with open(font_path, 'rb') as f:
+                with open(real_font_path, 'rb') as f:
                     file_data = f.read()
                 
                 self.send_response(200)
@@ -395,11 +416,21 @@ class MusicHandler(BaseHTTPRequestHandler):
             image_file = path.split('/')[-1]
             image_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'images', image_file)
             
-            print(f"Serving image file: {image_path}")
+            # Prevent path traversal attacks
+            base_dir = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'images'))
+            real_image_path = os.path.realpath(image_path)
+            if not real_image_path.startswith(base_dir + os.sep):
+                self.send_response(403)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Forbidden')
+                return
+            
+            print(f"Serving image file: {real_image_path}")
             
             try:
                 # Open in binary mode for image files
-                with open(image_path, 'rb') as f:
+                with open(real_image_path, 'rb') as f:
                     file_data = f.read()
                 
                 self.send_response(200)
