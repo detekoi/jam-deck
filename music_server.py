@@ -268,32 +268,21 @@ class MusicHandler(BaseHTTPRequestHandler):
         
         # Serve static files (HTML, CSS, JS)
         if path == '/' or path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):
-            # If path is just '/', serve overlay.html
+            base_dir = os.path.dirname(os.path.realpath(__file__))
+            # Use os.path.basename to strip directory components, preventing path traversal
             if path == '/':
-                file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'overlay.html')
+                safe_name = 'overlay.html'
             else:
-                # Remove leading slash and get the file from current directory
-                file_name = path.lstrip('/')
-                file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), file_name)
-            
-            # Prevent path traversal attacks
-            base_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
-            real_file_path = os.path.realpath(file_path)
-            if not real_file_path.startswith(base_dir + os.sep) and real_file_path != base_dir:
-                print(f"Blocked path traversal attempt: {path}")
-                self.send_response(403)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Forbidden')
-                return
+                safe_name = os.path.basename(path)
+            file_path = os.path.join(base_dir, safe_name)
             
             # Add debugging for file resolution
             print(f"Static file requested: {path}")
-            print(f"Resolving to path: {real_file_path}")
-            print(f"File exists: {os.path.exists(real_file_path)}")
+            print(f"Resolving to path: {file_path}")
+            print(f"File exists: {os.path.exists(file_path)}")
             
             try:
-                with open(real_file_path, 'rb') as f:
+                with open(file_path, 'rb') as f:
                     content = f.read()
                 
                 self.send_response(200)
