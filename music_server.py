@@ -47,6 +47,11 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Key: "artist - title", Value: True (found & downloaded) or False (not found)
 _itunes_artwork_cache = {}
 
+# Track which song's artwork is currently written to the temp file.
+# This prevents serving stale art when Apple Music writes a different song's
+# artwork to the file (e.g. for a queued/upcoming track).
+_last_artwork_track = None  # Will be set to "artist|||title" of the song whose art is on disk
+
 def fetch_itunes_artwork(artist, title, album):
     """Fetch album artwork from iTunes Search API as a fallback.
     
@@ -55,12 +60,22 @@ def fetch_itunes_artwork(artist, title, album):
     Returns True if artwork was found and saved, False otherwise.
     
     Uses subprocess curl instead of urllib to avoid SSL issues in py2app bundles.
-    """
-    cache_key = f"{artist} - {title}"
     
-    # Check cache first
-    if cache_key in _itunes_artwork_cache:
-        return _itunes_artwork_cache[cache_key]
+    The cache records which track's art is on disk so we never serve stale art
+    from a previously queued or different song.
+    """
+    global _last_artwork_track
+    cache_key = f"{artist} - {title}"
+    track_id = f"{artist}|||{title}"
+    
+    # If the cache says we already found this song's art AND the file on disk
+    # still belongs to this song, we can skip the download.
+    if _itunes_artwork_cache.get(cache_key) is True and _last_artwork_track == track_id:
+        return True
+    
+    # If cache says we previously couldn't find art for this song, don't retry.
+    if _itunes_artwork_cache.get(cache_key) is False:
+        return False
     
     try:
         # Search by artist + title for best match
@@ -110,6 +125,7 @@ def fetch_itunes_artwork(artist, title, album):
         file_size = os.path.getsize(artwork_path)
         print(f"iTunes artwork fallback: found artwork for '{search_term}' ({file_size} bytes)")
         _itunes_artwork_cache[cache_key] = True
+        _last_artwork_track = track_id  # Record which song's art is now on disk
         return True
         
     except Exception as e:
@@ -194,8 +210,10 @@ def get_apple_music_track():
         if status == 'true':
             # Playing: Expect 5 parts: playing, title, artist, album, has_artwork
             if len(parts) == 5:
+                global _last_artwork_track
                 title, artist, album, has_artwork_str = parts[1], parts[2], parts[3], parts[4]
                 has_artwork = has_artwork_str.lower() == 'true'
+                track_id = f"{artist}|||{title}"
 
                 # Build the data dictionary
                 data = {
@@ -205,20 +223,31 @@ def get_apple_music_track():
                     "album": album
                 }
 
+                # If AppleScript successfully wrote artwork, update the on-disk track record.
+                # This ensures we know whose art is currently in the temp file.
+                if has_artwork:
+                    _last_artwork_track = track_id
+
                 # Add artwork path if available (from AppleScript or iTunes fallback)
                 if not has_artwork:
                     # Try iTunes Search API as fallback
                     has_artwork = fetch_itunes_artwork(artist, title, album)
                 
                 if has_artwork:
-                    # Generate timestamp for cache busting
-                    try:
-                        timestamp = int(os.path.getmtime("/tmp/harmony_deck_cover.jpg"))
-                        data["artworkPath"] = f"/artwork?t={timestamp}"
-                    except FileNotFoundError:
-                        # Handle case where artwork file might not exist when getting timestamp
-                        print("Warning: Artwork file not found for timestamp, skipping artwork path.")
-                        # Continue without artwork path, data dictionary is already populated
+                    # Only serve the artwork file if it belongs to the current track.
+                    # If a different song's art is on disk (e.g. from a queued track),
+                    # we skip the artwork rather than show the wrong album art.
+                    if _last_artwork_track == track_id:
+                        # Generate timestamp for cache busting
+                        try:
+                            timestamp = int(os.path.getmtime("/tmp/harmony_deck_cover.jpg"))
+                            data["artworkPath"] = f"/artwork?t={timestamp}"
+                        except FileNotFoundError:
+                            # Handle case where artwork file might not exist when getting timestamp
+                            print("Warning: Artwork file not found for timestamp, skipping artwork path.")
+                            # Continue without artwork path, data dictionary is already populated
+                    else:
+                        print(f"Artwork on disk belongs to '{_last_artwork_track}', not current track '{track_id}'. Skipping stale art.")
 
                 # Convert dictionary to JSON using Python's json module for correct escaping
                 return json.dumps(data)

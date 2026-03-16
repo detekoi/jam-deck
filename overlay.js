@@ -456,17 +456,26 @@
                             
                             // Update artwork
                             const artworkContainer = document.getElementById('artworkContainer');
+                            const songChanged = !previousState || previousState.title !== data.title;
                             
                             if (data.artworkPath) {
-                                // Use the artworkPath provided by the JSON response
-                                if (!previousState || previousState.artworkPath !== data.artworkPath) {
+                                // Update artwork if the path changed OR if the song changed.
+                                // Checking song title as well guards against cases where a
+                                // queued track's art temporarily lands on disk with the same
+                                // mtime-based URL, which would otherwise get stuck showing
+                                // the wrong album art for the current track.
+                                if (songChanged || previousState.artworkPath !== data.artworkPath) {
                                     // Preload the new image first
                                     const newImg = new Image();
                                     newImg.onload = function() {
                                         artworkContainer.innerHTML = `<img src="${data.artworkPath}" alt="Album art">`;
                                         artworkContainer.className = 'album-art';
                                     };
-                                    newImg.src = data.artworkPath;
+                                    // Force a cache-busting reload when the song changes so the
+                                    // browser doesn't serve a cached copy of the old artwork.
+                                    newImg.src = songChanged
+                                        ? data.artworkPath + '&song=' + encodeURIComponent(data.title)
+                                        : data.artworkPath;
                                 }
                             } else {
                                 // No artwork, show music note
