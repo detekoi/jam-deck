@@ -215,7 +215,7 @@ body {
 .scroll-container {
     width: 100%;
     overflow: hidden;
-    padding: 0; /* Ensure no container padding affects text position */
+    padding: 2px 6px 2px 0; /* Right/top/bottom padding prevents text-shadow clipping */
 }
 
 .scroll-text {

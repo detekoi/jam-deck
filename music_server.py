@@ -52,14 +52,74 @@ _itunes_artwork_cache = {}
 # artwork to the file (e.g. for a queued/upcoming track).
 _last_artwork_track = None  # Will be set to "artist|||title" of the song whose art is on disk
 
+import re
+
+def _itunes_search(search_term, entity="song", limit=1):
+    """Perform an iTunes Search API query and return the parsed JSON data.
+    
+    Returns the parsed dict on success, or None on failure.
+    Uses subprocess curl to avoid SSL issues in py2app bundles.
+    """
+    query = f"term={quote_plus(search_term)}&media=music&entity={entity}&limit={limit}"
+    url = f"https://itunes.apple.com/search?{query}"
+    
+    try:
+        result = subprocess.run(
+            ['curl', '-s', '--max-time', '3', url],
+            capture_output=True, text=True, timeout=5
+        )
+        
+        if result.returncode != 0:
+            print(f"iTunes search: curl failed for '{search_term}'")
+            return None
+        
+        return json.loads(result.stdout)
+    except Exception as e:
+        print(f"iTunes search error for '{search_term}': {e}")
+        return None
+
+
+def _download_itunes_artwork(art_url, search_term):
+    """Download artwork from a given URL to the temp file.
+    
+    Upscales from 100x100 to 600x600 and saves to /tmp/harmony_deck_cover.jpg.
+    Returns True on success, False on failure.
+    """
+    # Upscale from 100x100 to 600x600
+    art_url = art_url.replace("100x100bb", "600x600bb")
+    
+    artwork_path = "/tmp/harmony_deck_cover.jpg"
+    try:
+        dl_result = subprocess.run(
+            ['curl', '-s', '--max-time', '3', '-o', artwork_path, art_url],
+            capture_output=True, timeout=5
+        )
+        
+        if dl_result.returncode != 0:
+            print(f"iTunes artwork: failed to download for '{search_term}'")
+            return False
+        
+        file_size = os.path.getsize(artwork_path)
+        print(f"iTunes artwork: downloaded for '{search_term}' ({file_size} bytes)")
+        return True
+    except Exception as e:
+        print(f"iTunes artwork download error: {e}")
+        return False
+
+
 def fetch_itunes_artwork(artist, title, album):
     """Fetch album artwork from iTunes Search API as a fallback.
     
-    Used when AppleScript can't retrieve artwork (e.g., macOS Tahoe streaming bug).
+    Used when AppleScript can't retrieve artwork (e.g., macOS Tahoe streaming bug,
+    or non-JPEG artwork formats).
     Downloads 600x600 artwork to /tmp/harmony_deck_cover.jpg.
     Returns True if artwork was found and saved, False otherwise.
     
-    Uses subprocess curl instead of urllib to avoid SSL issues in py2app bundles.
+    Uses a multi-strategy search to handle censored titles (e.g. "F**k Me Eyes")
+    and tracks that may not appear individually in search results:
+      1. Search by artist + title (exact as reported by Apple Music)
+      2. Strip censoring characters (*, etc.) and retry
+      3. Fall back to artist + album search for album-level artwork
     
     The cache records which track's art is on disk so we never serve stale art
     from a previously queued or different song.
@@ -78,54 +138,49 @@ def fetch_itunes_artwork(artist, title, album):
         return False
     
     try:
-        # Search by artist + title for best match
+        art_url = None
+        strategy_used = None
+        
+        # Strategy 1: Search by artist + title (original behavior)
         search_term = f"{artist} {title}"
-        query = f"term={quote_plus(search_term)}&media=music&entity=song&limit=1"
-        url = f"https://itunes.apple.com/search?{query}"
+        data = _itunes_search(search_term, entity="song", limit=1)
+        if data and data.get("resultCount", 0) > 0:
+            art_url = data["results"][0].get("artworkUrl100", "")
+            strategy_used = "artist+title"
         
-        # Use curl to avoid py2app SSL bundling issues
-        result = subprocess.run(
-            ['curl', '-s', '--max-time', '3', url],
-            capture_output=True, text=True, timeout=5
-        )
-        
-        if result.returncode != 0:
-            print(f"iTunes artwork fallback: curl failed for '{search_term}'")
-            _itunes_artwork_cache[cache_key] = False
-            return False
-        
-        data = json.loads(result.stdout)
-        
-        if data.get("resultCount", 0) == 0:
-            print(f"iTunes artwork fallback: no results for '{search_term}'")
-            _itunes_artwork_cache[cache_key] = False
-            return False
-        
-        art_url = data["results"][0].get("artworkUrl100", "")
+        # Strategy 2: Strip censoring characters (e.g. "F**k" -> "Fk") and retry
         if not art_url:
-            print(f"iTunes artwork fallback: no artwork URL in result for '{search_term}'")
+            cleaned_title = re.sub(r'[*]+', '', title)
+            if cleaned_title != title:
+                search_term_clean = f"{artist} {cleaned_title}"
+                print(f"iTunes artwork: retrying with cleaned title: '{search_term_clean}'")
+                data = _itunes_search(search_term_clean, entity="song", limit=1)
+                if data and data.get("resultCount", 0) > 0:
+                    art_url = data["results"][0].get("artworkUrl100", "")
+                    strategy_used = "artist+cleaned_title"
+        
+        # Strategy 3: Search by artist + album for album-level artwork
+        if not art_url and album:
+            search_term_album = f"{artist} {album}"
+            print(f"iTunes artwork: falling back to album search: '{search_term_album}'")
+            data = _itunes_search(search_term_album, entity="song", limit=1)
+            if data and data.get("resultCount", 0) > 0:
+                art_url = data["results"][0].get("artworkUrl100", "")
+                strategy_used = "artist+album"
+        
+        # If no artwork URL found from any strategy, cache the miss
+        if not art_url:
+            print(f"iTunes artwork fallback: no results for '{artist} - {title}' (album: {album}) after all strategies")
             _itunes_artwork_cache[cache_key] = False
             return False
         
-        # Upscale from 100x100 to 600x600
-        art_url = art_url.replace("100x100bb", "600x600bb")
-        
-        # Download the artwork image using curl
-        artwork_path = "/tmp/harmony_deck_cover.jpg"
-        dl_result = subprocess.run(
-            ['curl', '-s', '--max-time', '3', '-o', artwork_path, art_url],
-            capture_output=True, timeout=5
-        )
-        
-        if dl_result.returncode != 0:
-            print(f"iTunes artwork fallback: failed to download artwork for '{search_term}'")
+        # Download the artwork
+        if not _download_itunes_artwork(art_url, f"{artist} - {title} [via {strategy_used}]"):
             _itunes_artwork_cache[cache_key] = False
             return False
         
-        file_size = os.path.getsize(artwork_path)
-        print(f"iTunes artwork fallback: found artwork for '{search_term}' ({file_size} bytes)")
         _itunes_artwork_cache[cache_key] = True
-        _last_artwork_track = track_id  # Record which song's art is now on disk
+        _last_artwork_track = track_id
         return True
         
     except Exception as e:
@@ -151,21 +206,19 @@ def get_apple_music_track():
                 set artistName to artist of currentTrack
                 set albumName to album of currentTrack
                 
-                -- Try to get album artwork
+                -- Try to get album artwork (handles JPEG, PNG, and other formats)
                 set hasArtwork to false
                 try
                     set myArtwork to artwork 1 of currentTrack
                     set artworkFile to "/tmp/harmony_deck_cover.jpg"
-                    if format of myArtwork is JPEG picture then
-                        set myPicture to data of myArtwork
-                        set myFile to (open for access (POSIX file artworkFile) with write permission)
-                        set eof of myFile to 0
-                        write myPicture to myFile
-                        try
-                            close access (POSIX file artworkFile)
-                        end try
-                        set hasArtwork to true
-                    end if
+                    set myPicture to data of myArtwork
+                    set myFile to (open for access (POSIX file artworkFile) with write permission)
+                    set eof of myFile to 0
+                    write myPicture to myFile
+                    try
+                        close access (POSIX file artworkFile)
+                    end try
+                    set hasArtwork to true
                 on error errMsg
                     -- Log error but continue
                     do shell script "echo 'Artwork error: " & errMsg & "' >> /tmp/harmony-deck-log.txt"
