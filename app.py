@@ -7,6 +7,22 @@ import threading
 import time
 import json
 
+# Patch rumps.notification to avoid crashes when running outside a bundled app
+_orig_notification = rumps.notification
+def safe_notification(*args, **kwargs):
+    try:
+        _orig_notification(*args, **kwargs)
+    except Exception as e:
+        # Extract details for fallback log printing
+        title = kwargs.get('title', args[0] if len(args) > 0 else '')
+        subtitle = kwargs.get('subtitle', args[1] if len(args) > 1 else '')
+        message = kwargs.get('message', args[2] if len(args) > 2 else '')
+        print(f"Notification: [{title}] {subtitle} - {message} (Skipped system alert: {e})")
+
+rumps.notification = safe_notification
+rumps.App.notification = safe_notification
+
+
 # Import version from music_server.py
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from music_server import VERSION
@@ -28,6 +44,12 @@ class JamDeckApp(rumps.App):
         self.scenes, self.preferred_port = self.load_config()
         self.actual_port = self.preferred_port # Initially assume preferred port, will be updated by server output
 
+        # Update checker state
+        self._notified_version = None
+        self._latest_release_url = "https://github.com/detekoi/jam-deck/releases"
+        self._latest_version_str = None
+        self._update_checking_in_progress = False
+
         # --- Menu Setup ---
         # Create static items
         set_port_item = rumps.MenuItem("Set Server Port...", callback=self.set_server_port)
@@ -36,6 +58,7 @@ class JamDeckApp(rumps.App):
         self.server_url_display.set_callback(None) # Make it non-clickable initially
         open_browser_item = rumps.MenuItem("Open in Browser", callback=self.open_browser)
         docs_item = rumps.MenuItem("Documentation", callback=self.open_documentation)
+        self.update_menu_item = rumps.MenuItem("Check for Updates", callback=self.on_check_for_updates)
         about_item = rumps.MenuItem("About", callback=self.show_about)
 
         # Create dynamic menu placeholders
@@ -58,11 +81,24 @@ class JamDeckApp(rumps.App):
             open_browser_item,
             None,  # Separator
             docs_item,
+            self.update_menu_item,
             about_item
         ]
 
         # Update menu text based on current state
         self.update_menu_state()
+
+        # Start background update checks
+        # Check 5 seconds after launch to let UI fully initialize without lag
+        def initial_check(timer):
+            timer.stop()
+            self.check_for_updates(manual=False)
+        rumps.Timer(initial_check, 5).start()
+
+        # Periodic check every 6 hours (21600 seconds)
+        def periodic_check(_):
+            self.check_for_updates(manual=False)
+        rumps.Timer(periodic_check, 21600).start()
 
     # --- Helper methods for populating dynamic menus ---
     def _populate_copy_menu(self, menu_item):
@@ -239,9 +275,7 @@ class JamDeckApp(rumps.App):
                             self.actual_port = int(port_str)
                             print(f"Detected server port: {self.actual_port}")
                             # Update UI on main thread
-                            def update_ui_port():
-                                self.update_menu_state()
-                            rumps.Timer(0, update_ui_port).start()
+                            self._run_on_main_thread(self.update_menu_state)
                         except (IndexError, ValueError) as e:
                             print(f"Error parsing port from server output: {e}")
 
@@ -268,9 +302,7 @@ class JamDeckApp(rumps.App):
             )
             
             # Update menu state on main thread
-            def update():
-                self.update_menu_state()
-            rumps.Timer(0, update).start()
+            self._run_on_main_thread(self.update_menu_state)
 
     def open_browser(self, _):
         """Open overlay in default browser using the actual port"""
@@ -321,6 +353,269 @@ class JamDeckApp(rumps.App):
                 "© 2026 Henry Manes"
             )
         )
+
+    def _parse_version(self, version_str):
+        """Parse a version string like '1.1.6' or 'v1.1.6' into a comparable tuple of ints."""
+        try:
+            cleaned = version_str.strip().lstrip('v')
+            base_version = cleaned.split('-')[0]
+            return tuple(int(x) for x in base_version.split('.'))
+        except Exception:
+            return (0, 0, 0)
+
+    def _run_on_main_thread(self, callback):
+        """Schedule a one-shot callback on the main thread via rumps.Timer.
+        
+        rumps.Timer with interval 0 never fires on the macOS NSTimer run loop.
+        This helper uses a 0.1s interval and stops the timer after the first invocation.
+        """
+        def wrapper(timer):
+            timer.stop()
+            callback()
+        rumps.Timer(wrapper, 0.1).start()
+
+    def check_for_updates(self, manual=False):
+        """Check GitHub for updates in a background thread."""
+        if self._update_checking_in_progress:
+            return
+        
+        self._update_checking_in_progress = True
+        
+        if manual:
+            self.update_menu_item.title = "Checking for Updates..."
+            
+        def run_check():
+            try:
+                # Use curl to request the latest release JSON
+                url = "https://api.github.com/repos/detekoi/jam-deck/releases/latest"
+                cmd = ['curl', '-s', '--max-time', '5', url]
+                result = subprocess.run(cmd, capture_output=True, timeout=7)
+                
+                if result.returncode != 0:
+                    print("Update check: curl failed")
+                    if manual:
+                        self._run_on_main_thread(lambda: rumps.alert("Update Check Failed", "Could not connect to GitHub. Please check your internet connection and try again."))
+                    return
+                
+                stdout_str = result.stdout.decode('utf-8', errors='replace')
+                data = json.loads(stdout_str)
+                latest_tag = data.get("tag_name")
+                release_url = data.get("html_url", "https://github.com/detekoi/jam-deck/releases")
+                
+                if not latest_tag:
+                    print("Update check: tag_name not found in response")
+                    if manual:
+                        self._run_on_main_thread(lambda: rumps.alert("Update Check Failed", "Received invalid response from GitHub."))
+                    return
+                
+                latest_ver = self._parse_version(latest_tag)
+                current_ver = self._parse_version(VERSION)
+                
+                print(f"Update check: Latest is {latest_tag} ({latest_ver}), Current is {VERSION} ({current_ver})")
+                
+                self._latest_release_url = release_url
+                self._latest_version_str = latest_tag
+                
+                if latest_ver > current_ver:
+                    tag = latest_tag  # Capture for closure
+                    self._run_on_main_thread(lambda: setattr(self.update_menu_item, 'title', f"Update Available ({tag}) \u2193"))
+                    
+                    if self._notified_version != latest_tag:
+                        self._notified_version = latest_tag
+                        self._run_on_main_thread(lambda: rumps.notification(
+                            title="Jam Deck Update Available",
+                            subtitle=f"Version {tag} is ready!",
+                            message="Click 'Update Available' in the menu bar to download.",
+                            sound=False
+                        ))
+                else:
+                    def _handle_uptodate():
+                        self.update_menu_item.title = "Check for Updates"
+                        if manual:
+                            rumps.alert("Jam Deck is Up to Date", f"You are running the latest version (v{VERSION}).")
+                    self._run_on_main_thread(_handle_uptodate)
+                    
+            except Exception as e:
+                print(f"Update check error: {e}")
+                if manual:
+                    err_msg = str(e)
+                    self._run_on_main_thread(lambda: rumps.alert("Update Check Error", f"An error occurred while checking for updates:\n{err_msg}"))
+            finally:
+                self._update_checking_in_progress = False
+                if manual and self.update_menu_item.title == "Checking for Updates...":
+                    self._run_on_main_thread(lambda: setattr(self.update_menu_item, 'title', 'Check for Updates'))
+                    
+        threading.Thread(target=run_check, daemon=True).start()
+
+    def on_check_for_updates(self, sender):
+        """Callback when user clicks 'Check for Updates' / 'Update Available'."""
+        current_ver = self._parse_version(VERSION)
+        latest_ver = self._parse_version(self._latest_version_str) if self._latest_version_str else (0, 0, 0)
+        
+        if self._latest_version_str and latest_ver > current_ver:
+            # Prompt the user for confirmation
+            choice = rumps.alert(
+                title="Update Jam Deck",
+                message=f"A new version of Jam Deck is available!\n\n"
+                        f"Current Version: v{VERSION}\n"
+                        f"Latest Version: {self._latest_version_str}\n\n"
+                        f"Would you like to download and install this update now? "
+                        f"The application will restart automatically.",
+                ok="Download and Install",
+                cancel="Cancel"
+            )
+            if choice == 1:  # "Download and Install" clicked
+                self.install_update()
+        else:
+            self.check_for_updates(manual=True)
+
+    def install_update(self):
+        """Download the DMG, mount it, and replace the running app."""
+        if self._update_checking_in_progress:
+            return
+            
+        self._update_checking_in_progress = True
+        self.update_menu_item.title = "Downloading Update..."
+        
+        def run_update():
+            dmg_path = "/tmp/JamDeck_latest.dmg"
+            try:
+                # 1. Download DMG
+                print(f"Downloading update from {self._latest_release_url}...")
+                
+                # Fetch direct download URL from release JSON
+                url = "https://api.github.com/repos/detekoi/jam-deck/releases/latest"
+                cmd = ['curl', '-s', '--max-time', '5', url]
+                result = subprocess.run(cmd, capture_output=True, timeout=7)
+                
+                if result.returncode != 0:
+                    raise Exception("Failed to contact GitHub to retrieve download link.")
+                    
+                stdout_str = result.stdout.decode('utf-8', errors='replace')
+                data = json.loads(stdout_str)
+                assets = data.get("assets", [])
+                download_url = None
+                for asset in assets:
+                    if asset.get("name", "").endswith(".dmg"):
+                        download_url = asset.get("browser_download_url")
+                        break
+                        
+                if not download_url:
+                    latest_tag = data.get("tag_name", self._latest_version_str)
+                    download_url = f"https://github.com/detekoi/jam-deck/releases/download/{latest_tag}/JamDeck.dmg"
+                
+                print(f"Downloading DMG from: {download_url}")
+                dl_cmd = ['curl', '-L', '-s', '--max-time', '60', '-o', dmg_path, download_url]
+                dl_result = subprocess.run(dl_cmd, capture_output=True, timeout=65)
+                
+                if dl_result.returncode != 0 or not os.path.exists(dmg_path) or os.path.getsize(dmg_path) < 1000000:
+                    raise Exception("Failed to download the update DMG file.")
+                    
+                # 2. Mount DMG
+                self._run_on_main_thread(lambda: setattr(self.update_menu_item, 'title', 'Installing Update...'))
+                
+                print("Mounting DMG...")
+                mount_cmd = ["hdiutil", "attach", "-nobrowse", "-readonly", dmg_path]
+                mount_result = subprocess.run(mount_cmd, capture_output=True, timeout=15)
+                
+                mount_stdout = mount_result.stdout.decode('utf-8', errors='replace')
+                mount_stderr = mount_result.stderr.decode('utf-8', errors='replace')
+                
+                if mount_result.returncode != 0:
+                    raise Exception(f"Failed to mount the downloaded DMG: {mount_stderr}")
+                    
+                idx = mount_stdout.find("/Volumes/")
+                if idx == -1:
+                    raise Exception("DMG mounted, but could not determine volume mount point.")
+                mount_point = mount_stdout[idx:].splitlines()[0].strip()
+                print(f"Mounted successfully at: {mount_point}")
+                
+                src_app_path = os.path.join(mount_point, "Jam Deck.app")
+                if not os.path.exists(src_app_path):
+                    subprocess.run(["hdiutil", "detach", mount_point])
+                    raise Exception(f"Could not find Jam Deck.app inside the volume '{mount_point}'.")
+                
+                # Determine destination path
+                if getattr(sys, 'frozen', False) or "Jam Deck.app/Contents/MacOS" in sys.executable:
+                    is_bundled = True
+                    dest_app_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.executable))))
+                else:
+                    is_bundled = False
+                    dest_app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "Jam Deck.app")
+                    
+                print(f"Source: {src_app_path}")
+                print(f"Destination: {dest_app_path}")
+                
+                # Check write permissions
+                dest_dir = os.path.dirname(dest_app_path)
+                if not os.access(dest_dir, os.W_OK) or (os.path.exists(dest_app_path) and not os.access(dest_app_path, os.W_OK)):
+                    subprocess.run(["hdiutil", "detach", mount_point])
+                    raise PermissionError(f"Jam Deck does not have permission to overwrite the app at '{dest_app_path}'.")
+                
+                # 3. Spawn background script to overwrite and relaunch
+                self._run_updater_script(dmg_path, mount_point, src_app_path, dest_app_path, is_bundled)
+                
+                # 4. Exit parent process
+                if self.server_running:
+                    self.stop_server()
+                os._exit(0)
+                
+            except Exception as e:
+                print(f"Installation error: {e}")
+                try:
+                    vol_path = "/Volumes/JamDeck"
+                    if os.path.exists(vol_path):
+                        subprocess.run(["hdiutil", "detach", vol_path])
+                    if os.path.exists(dmg_path):
+                        os.remove(dmg_path)
+                except Exception:
+                    pass
+                    
+                err_msg = str(e)
+                def _handle_install_error():
+                    rumps.alert("Update Installation Failed", f"An error occurred during update installation:\n{err_msg}")
+                    self.update_menu_item.title = "Check for Updates"
+                self._run_on_main_thread(_handle_install_error)
+            finally:
+                self._update_checking_in_progress = False
+                
+        threading.Thread(target=run_update, daemon=True).start()
+
+    def _run_updater_script(self, dmg_path, mount_point, src_app_path, dest_app_path, is_bundled):
+        """Spawn a detached shell script to replace the app and relaunch it."""
+        parent_pid = os.getpid()
+        
+        escaped_dest = dest_app_path.replace('"', '\\"')
+        escaped_src = src_app_path.replace('"', '\\"')
+        escaped_mount = mount_point.replace('"', '\\"')
+        escaped_dmg = dmg_path.replace('"', '\\"')
+        
+        if is_bundled:
+            launch_cmd = f'open "{escaped_dest}"'
+        else:
+            launch_cmd = f'echo "Dev mode: App updated successfully!"'
+            
+        script = f"""
+(
+    # Wait for parent process to exit
+    while kill -0 {parent_pid} 2>/dev/null; do
+        sleep 0.1
+    done
+    
+    # Overwrite the app
+    rm -rf "{escaped_dest}"
+    cp -R "{escaped_src}" "{escaped_dest}"
+    
+    # Cleanup DMG and mount point
+    hdiutil detach "{escaped_mount}"
+    rm -f "{escaped_dmg}"
+    
+    # Relaunch the app
+    {launch_cmd}
+) &
+"""
+        print(f"Spawning background updater script:\n{script}")
+        subprocess.Popen(script, shell=True, start_new_session=True)
 
     def set_server_port(self, _):
         """Show dialog to set the preferred server port."""
