@@ -661,13 +661,19 @@ class JamDeckApp(rumps.App):
                     raise ValueError("Port must be between 1024 and 65535.") # Raise specific error for range
 
                 # If conversion and range check pass, proceed
-                if port_num != self.preferred_port:
+                port_changed = port_num != self.preferred_port
+                # Also check if the server is running on a different port than requested
+                # (e.g. after a fallback due to port conflict during auto-update)
+                actual_port_mismatch = self.server_running and self.actual_port != port_num
+
+                if port_changed or actual_port_mismatch:
                     self.preferred_port = port_num
-                    self.save_config() # Save the new port
+                    if port_changed:
+                        self.save_config() # Save only if preferred port actually changed
 
                     # Decide on action based on whether server was running
                     if was_running:
-                            print("Port changed while server running. Restarting server...")
+                            print(f"Port {'changed' if port_changed else 'unchanged but actual port mismatched'}. Restarting server...")
                             rumps.notification(
                                 title="Port Updated",
                                 subtitle=f"Preferred port set to {self.preferred_port}",
