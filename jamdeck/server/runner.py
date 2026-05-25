@@ -7,6 +7,7 @@ import atexit
 import zmq
 from http.server import HTTPServer
 
+from jamdeck import get_resources_dir
 from jamdeck.server.artwork import ArtworkManager
 from jamdeck.server.apple_music import AppleMusicProvider
 from jamdeck.server.handler import MusicHandler
@@ -55,7 +56,7 @@ def run_server(preferred_port=None):
     # Configure the handler class with the providers
     MusicHandler.artwork_manager = artwork_manager
     MusicHandler.apple_music_provider = apple_music_provider
-    MusicHandler.root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    MusicHandler.root_dir = get_resources_dir()
 
     # 1. Try the preferred port first if provided
     if preferred_port:

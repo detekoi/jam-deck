@@ -19,10 +19,11 @@ class MusicHandler(BaseHTTPRequestHandler):
         path = parsed_path.path
         print(f"Request received: {path}")
         
-        # Use configured root_dir or calculate from this file
+        # Use configured root_dir or calculate using get_resources_dir
         base_dir = self.root_dir
         if not base_dir:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+            from jamdeck import get_resources_dir
+            base_dir = get_resources_dir()
         
         # Serve static files (HTML, CSS, JS)
         if path == '/' or path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):

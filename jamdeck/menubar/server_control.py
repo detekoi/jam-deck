@@ -5,6 +5,7 @@ import time
 import subprocess
 import threading
 import rumps
+from jamdeck import get_resources_dir
 from jamdeck.menubar.config import ConfigManager
 
 class ServerController:
@@ -15,13 +16,9 @@ class ServerController:
         """Start the music server"""
         if not self.app.server_running:
             try:
-                # Find music_server.py in the package's parent folder (or next to entrypoint)
-                # Let's inspect where it should be.
-                # In development mode, music_server.py is in the root directory.
-                # In bundled mode, it's also in the Resources directory.
-                # The root directory is the parent of the jamdeck package directory.
-                script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                server_path = os.path.join(script_dir, "music_server.py")
+                # Find music_server.py using get_resources_dir
+                resources_dir = get_resources_dir()
+                server_path = os.path.join(resources_dir, "music_server.py")
                 
                 # Use Python from the current executable
                 python_path = sys.executable

@@ -19,7 +19,7 @@ def safe_notification(*args, **kwargs):
 rumps.notification = safe_notification
 rumps.App.notification = safe_notification
 
-from jamdeck import VERSION
+from jamdeck import VERSION, get_resources_dir
 from jamdeck.menubar.config import ConfigManager
 from jamdeck.menubar.scenes import SceneManager
 from jamdeck.menubar.updater import UpdateManager
@@ -27,9 +27,9 @@ from jamdeck.menubar.server_control import ServerController
 
 class JamDeckApp(rumps.App):
     def __init__(self):
-        # Path to menu bar icon
-        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        icon_path = os.path.join(script_dir, "assets/images/jamdeck-template.png")
+        # Path to menu bar icon resolved using get_resources_dir
+        resources_dir = get_resources_dir()
+        icon_path = os.path.join(resources_dir, "assets/images/jamdeck-template.png")
         
         super(JamDeckApp, self).__init__("Jam Deck", icon=icon_path, template=True)
         
