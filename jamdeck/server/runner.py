@@ -71,6 +71,10 @@ def run_server(preferred_port=None):
             httpd = HTTPServer(server_address, MusicHandler)
             actual_port = preferred_port
             port_found = True
+
+            # IMPORTANT: Print the port for the parent process BEFORE other messages
+            print(f"JAMDECK_PORT={actual_port}")
+            sys.stdout.flush()
             print(f"Successfully bound to preferred port {actual_port}")
 
         except socket.error as e:
