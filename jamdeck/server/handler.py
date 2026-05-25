@@ -34,13 +34,23 @@ class MusicHandler(BaseHTTPRequestHandler):
                 safe_name = os.path.basename(path)
             file_path = os.path.join(base_dir, safe_name)
             
+            # Prevent path traversal attacks
+            real_base_dir = os.path.realpath(base_dir)
+            real_file_path = os.path.realpath(file_path)
+            if not real_file_path.startswith(real_base_dir + os.sep) and real_file_path != real_base_dir:
+                self.send_response(403)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Forbidden')
+                return
+            
             # Add debugging for file resolution
             print(f"Static file requested: {path}")
-            print(f"Resolving to path: {file_path}")
-            print(f"File exists: {os.path.exists(file_path)}")
+            print(f"Resolving to path: {real_file_path}")
+            print(f"File exists: {os.path.exists(real_file_path)}")
             
             try:
-                with open(file_path, 'rb') as f:
+                with open(real_file_path, 'rb') as f:
                     content = f.read()
                 
                 self.send_response(200)
