@@ -50,6 +50,26 @@ class JamDeckApp(rumps.App):
         self._latest_version_str = None
         self._update_checking_in_progress = False
 
+        # Main-thread callback queue for dispatching UI updates from background threads.
+        # rumps.Timer uses NSTimer, which only fires on the thread's run loop.
+        # Background threads have no active run loop, so timers created there never fire.
+        # Instead, background threads append callbacks to this queue, and a main-thread
+        # timer polls it every 250ms.
+        self._main_thread_queue = []
+        self._main_thread_lock = threading.Lock()
+
+        def _process_main_thread_queue(_):
+            with self._main_thread_lock:
+                pending = list(self._main_thread_queue)
+                self._main_thread_queue.clear()
+            for cb in pending:
+                try:
+                    cb()
+                except Exception as e:
+                    print(f"Main thread callback error: {e}")
+
+        rumps.Timer(_process_main_thread_queue, 0.25).start()
+
         # --- Menu Setup ---
         # Create static items
         set_port_item = rumps.MenuItem("Set Server Port...", callback=self.set_server_port)
@@ -364,15 +384,14 @@ class JamDeckApp(rumps.App):
             return (0, 0, 0)
 
     def _run_on_main_thread(self, callback):
-        """Schedule a one-shot callback on the main thread via rumps.Timer.
+        """Dispatch a callback to the main thread via the polling queue.
         
-        rumps.Timer with interval 0 never fires on the macOS NSTimer run loop.
-        This helper uses a 0.1s interval and stops the timer after the first invocation.
+        rumps.Timer (NSTimer) only fires on a thread with an active run loop.
+        Background threads have no run loop, so we enqueue callbacks for the
+        main-thread polling timer (set up in __init__) to process.
         """
-        def wrapper(timer):
-            timer.stop()
-            callback()
-        rumps.Timer(wrapper, 0.1).start()
+        with self._main_thread_lock:
+            self._main_thread_queue.append(callback)
 
     def check_for_updates(self, manual=False):
         """Check GitHub for updates in a background thread."""
