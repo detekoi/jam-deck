@@ -1,17 +1,21 @@
 # Jam Deck for OBS: Dev Reference Guide
 
 ## Project Structure
-- `music_server.py` - Python server that communicates with Apple Music and serves data
-- `overlay.html` - HTML/CSS/JS for the browser source display
-- `app.py` - Menu bar application code (using rumps)
+- `app.py` - Entry point for the macOS menu bar app
+- `music_server.py` - Standalone entry point for the HTTP server
+- `jamdeck/` - Main package directory for Jam Deck application logic
+  - `menubar/` - Menu bar UI, configuration, scene management, updater
+  - `server/` - HTTP server routing, static asset serving, Apple Music tracking, artwork fetching
+- `overlay.html` / `overlay.js` / `overlay.css` - HTML/CSS/JS for the OBS browser source overlay
 - `setup.py` - Build configuration for py2app
 - `collect_zmq.py` - Helper for ZeroMQ libraries bundling
 - Browser source URL: http://localhost:8080/
 
 ## Commands
 - Start server: `./music_server.py` or `python3 music_server.py`
+- Start app: `python3 app.py`
 - Build app: `python setup.py py2app` (creates .app in dist/)
-- Version updates: Update VERSION in `music_server.py`, `setup.py` CFBundleVersion
+- Version updates: Update VERSION in `jamdeck/__init__.py`, `setup.py` CFBundleVersion/CFBundleShortVersionString
 - No linting commands (simple Python/HTML project)
 
 ## Code Style Guidelines

@@ -36,6 +36,7 @@ npm-debug.log*
 # Editor directories and files
 .idea
 .vscode
+.claude
 *.swp
 *.swo
 
