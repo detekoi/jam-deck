@@ -202,12 +202,29 @@ class UpdateManager:
                     subprocess.run(["hdiutil", "detach", mount_point])
                     raise PermissionError(f"Jam Deck does not have permission to overwrite the app at '{dest_app_path}'.")
                 
-                # 3. Spawn background script to overwrite and relaunch
+                # 3. Stop the server and wait for it to fully exit
+                server_proc = None
+                if self.app.server_running:
+                    server_proc = self.app.server_process
+                    self.app.stop_server()
+                
+                # Wait for the server subprocess to actually die so it releases the port
+                if server_proc:
+                    try:
+                        server_proc.wait(timeout=5)
+                        print("Server process exited cleanly.")
+                    except subprocess.TimeoutExpired:
+                        print("Server process did not exit in time, killing it.")
+                        try:
+                            server_proc.kill()
+                            server_proc.wait(timeout=2)
+                        except Exception:
+                            pass
+                
+                # 4. Spawn background script to overwrite and relaunch
                 self._run_updater_script(dmg_path, mount_point, src_app_path, dest_app_path, is_bundled)
                 
-                # 4. Exit parent process
-                if self.app.server_running:
-                    self.app.stop_server()
+                # 5. Exit parent process
                 os._exit(0)
                 
             except Exception as e:
@@ -251,6 +268,12 @@ class UpdateManager:
             while kill -0 {parent_pid} 2>/dev/null; do
                 sleep 0.1
             done
+            
+            # Kill any lingering Jam Deck server processes that might hold the port
+            pkill -f "music_server.py" 2>/dev/null || true
+            
+            # Brief pause to ensure the port is fully released
+            sleep 1
             
             # Overwrite the app
             rm -rf "{escaped_dest}"

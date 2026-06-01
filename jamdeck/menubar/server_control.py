@@ -116,6 +116,17 @@ class ServerController:
                             print(f"Detected server port: {self.app.actual_port}")
                             # Update UI on main thread
                             self.app.run_on_main_thread(self.app.update_menu_state)
+                            
+                            # Warn the user if we fell back to a different port
+                            if self.app.actual_port != self.app.preferred_port:
+                                fallback_port = self.app.actual_port
+                                pref_port = self.app.preferred_port
+                                self.app.run_on_main_thread(lambda: rumps.notification(
+                                    title="Jam Deck",
+                                    subtitle=f"Port {pref_port} was unavailable",
+                                    message=f"Server started on port {fallback_port} instead. Another process may be using port {pref_port}.",
+                                    sound=False
+                                ))
                         except (IndexError, ValueError) as e:
                             print(f"Error parsing port from server output: {e}")
 
