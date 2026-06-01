@@ -9,6 +9,22 @@ class MusicHandler(BaseHTTPRequestHandler):
     artwork_manager = None
     root_dir = None
 
+    @staticmethod
+    def _resolve_safe_path(base_dir, *untrusted_parts):
+        """Resolve a file path and validate it stays within base_dir.
+        
+        Returns the resolved absolute path if safe, or None if the path
+        would escape the base directory (path traversal attempt).
+        """
+        # Use only the basename of the final component to strip traversal sequences
+        sanitized_parts = list(untrusted_parts[:-1]) + [os.path.basename(untrusted_parts[-1])]
+        candidate = os.path.join(base_dir, *sanitized_parts)
+        real_base = os.path.realpath(base_dir)
+        real_candidate = os.path.realpath(candidate)
+        if real_candidate == real_base or real_candidate.startswith(real_base + os.sep):
+            return real_candidate
+        return None
+
     def log_message(self, format, *args):
         # Print to stdout instead of stderr for better visibility
         print(f"{self.address_string()} - - [{self.log_date_time_string()}] {format % args}")
@@ -27,45 +43,38 @@ class MusicHandler(BaseHTTPRequestHandler):
         
         # Serve static files (HTML, CSS, JS)
         if path == '/' or path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):
-            # Use os.path.basename to strip directory components, preventing path traversal
-            if path == '/':
-                safe_name = 'overlay.html'
-            else:
-                safe_name = os.path.basename(path)
-            file_path = os.path.join(base_dir, safe_name)
+            safe_name = 'overlay.html' if path == '/' else os.path.basename(path)
+            safe_path = self._resolve_safe_path(base_dir, safe_name)
             
-            # Prevent path traversal attacks
-            real_base_dir = os.path.realpath(base_dir)
-            real_file_path = os.path.realpath(file_path)
-            if not real_file_path.startswith(real_base_dir + os.sep) and real_file_path != real_base_dir:
+            if safe_path is None:
                 self.send_response(403)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b'Forbidden')
                 return
             
-            # Add debugging for file resolution
-            print(f"Static file requested: {path}")
-            print(f"Resolving to path: {real_file_path}")
-            print(f"File exists: {os.path.exists(real_file_path)}")
+            # Debug logging uses the validated safe_path
+            print(f"Static file requested: {safe_name}")
+            print(f"Resolving to path: {safe_path}")
+            print(f"File exists: {os.path.exists(safe_path)}")
             
             try:
-                with open(real_file_path, 'rb') as f:
+                with open(safe_path, 'rb') as f:
                     content = f.read()
                 
                 self.send_response(200)
                 # Set correct content type based on file extension
-                if path.endswith('.html'):
+                if safe_name.endswith('.html'):
                     content_type = 'text/html'
-                elif path.endswith('.css'):
+                elif safe_name.endswith('.css'):
                     content_type = 'text/css'
-                elif path.endswith('.js'):
+                elif safe_name.endswith('.js'):
                     content_type = 'text/javascript'
                 else:
                     content_type = 'text/html'  # default for '/' path
                 
                 content_length = len(content)
-                print(f"Serving {path} ({content_length} bytes) as {content_type}")
+                print(f"Serving {safe_name} ({content_length} bytes) as {content_type}")
                 
                 self.send_header('Content-type', content_type)
                 self.send_header('Content-Length', str(content_length))
@@ -74,14 +83,14 @@ class MusicHandler(BaseHTTPRequestHandler):
                 self.wfile.write(content)
                 return
             except FileNotFoundError:
-                print(f"ERROR: File not found: {file_path}")
+                print(f"ERROR: File not found: {safe_name}")
                 self.send_response(404)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b'File not found')
                 return
             except Exception as e:
-                print(f"ERROR serving {path}: {str(e)}")
+                print(f"ERROR serving {safe_name}: {str(e)}")
                 self.send_response(500)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
@@ -134,25 +143,21 @@ class MusicHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'Artwork not found')
                 
         elif path.startswith('/assets/fonts/'):
-            # Extract the filename from the path
             font_file = path.split('/')[-1]
-            font_path = os.path.join(base_dir, 'assets', 'fonts', font_file)
+            safe_font_path = self._resolve_safe_path(base_dir, 'assets', 'fonts', font_file)
             
-            # Prevent path traversal attacks
-            base_fonts_dir = os.path.realpath(os.path.join(base_dir, 'assets', 'fonts'))
-            real_font_path = os.path.realpath(font_path)
-            if not real_font_path.startswith(base_fonts_dir + os.sep):
+            if safe_font_path is None:
                 self.send_response(403)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b'Forbidden')
                 return
             
-            print(f"Serving font file: {real_font_path}")
+            print(f"Serving font file: {safe_font_path}")
             
             try:
                 # Open in binary mode for font files
-                with open(real_font_path, 'rb') as f:
+                with open(safe_font_path, 'rb') as f:
                     file_data = f.read()
                 
                 self.send_response(200)
@@ -172,25 +177,21 @@ class MusicHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f'Font file not found: {str(e)}'.encode())
                 
         elif path.startswith('/assets/images/'):
-            # Extract the filename from the path
             image_file = path.split('/')[-1]
-            image_path = os.path.join(base_dir, 'assets', 'images', image_file)
+            safe_image_path = self._resolve_safe_path(base_dir, 'assets', 'images', image_file)
             
-            # Prevent path traversal attacks
-            base_images_dir = os.path.realpath(os.path.join(base_dir, 'assets', 'images'))
-            real_image_path = os.path.realpath(image_path)
-            if not real_image_path.startswith(base_images_dir + os.sep):
+            if safe_image_path is None:
                 self.send_response(403)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b'Forbidden')
                 return
             
-            print(f"Serving image file: {real_image_path}")
+            print(f"Serving image file: {safe_image_path}")
             
             try:
                 # Open in binary mode for image files
-                with open(real_image_path, 'rb') as f:
+                with open(safe_image_path, 'rb') as f:
                     file_data = f.read()
                 
                 self.send_response(200)
