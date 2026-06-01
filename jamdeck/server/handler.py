@@ -1,6 +1,7 @@
 # jamdeck/server/handler.py
 import os
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse
 
 class MusicHandler(BaseHTTPRequestHandler):
@@ -9,26 +10,17 @@ class MusicHandler(BaseHTTPRequestHandler):
     artwork_manager = None
     root_dir = None
 
-    @staticmethod
-    def _resolve_safe_path(base_dir, *untrusted_parts):
-        """Resolve a file path and validate it stays within base_dir.
-        
-        Returns the resolved absolute path if safe, or None if the path
-        would escape the base directory (path traversal attempt).
-        """
-        # Use only the basename of the final component to strip traversal sequences
-        sanitized_parts = list(untrusted_parts[:-1]) + [os.path.basename(untrusted_parts[-1])]
-        candidate = os.path.join(base_dir, *sanitized_parts)
-        real_base = os.path.realpath(base_dir)
-        real_candidate = os.path.realpath(candidate)
-        if real_candidate == real_base or real_candidate.startswith(real_base + os.sep):
-            return real_candidate
-        return None
-
     def log_message(self, format, *args):
         # Print to stdout instead of stderr for better visibility
         print(f"{self.address_string()} - - [{self.log_date_time_string()}] {format % args}")
     
+    def _send_forbidden(self):
+        """Send a 403 Forbidden response."""
+        self.send_response(403)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Forbidden')
+
     def do_GET(self):
         # Parse the URL
         parsed_path = urlparse(self.path)
@@ -41,26 +33,27 @@ class MusicHandler(BaseHTTPRequestHandler):
             from jamdeck import get_resources_dir
             base_dir = get_resources_dir()
         
+        # Resolve the base directory once as an absolute Path
+        resolved_base = Path(base_dir).resolve()
+        
         # Serve static files (HTML, CSS, JS)
         if path == '/' or path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):
+            # Use only the basename to strip any directory traversal components
             safe_name = 'overlay.html' if path == '/' else os.path.basename(path)
-            safe_path = self._resolve_safe_path(base_dir, safe_name)
+            resolved_path = (resolved_base / safe_name).resolve()
             
-            if safe_path is None:
-                self.send_response(403)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Forbidden')
+            # Inline path traversal guard — CodeQL recognizes is_relative_to
+            if not resolved_path.is_relative_to(resolved_base):
+                self._send_forbidden()
                 return
             
-            # Debug logging uses the validated safe_path
+            # Debug logging uses the validated resolved_path
             print(f"Static file requested: {safe_name}")
-            print(f"Resolving to path: {safe_path}")
-            print(f"File exists: {os.path.exists(safe_path)}")
+            print(f"Resolving to path: {resolved_path}")
+            print(f"File exists: {resolved_path.exists()}")
             
             try:
-                with open(safe_path, 'rb') as f:
-                    content = f.read()
+                content = resolved_path.read_bytes()
                 
                 self.send_response(200)
                 # Set correct content type based on file extension
@@ -143,22 +136,19 @@ class MusicHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'Artwork not found')
                 
         elif path.startswith('/assets/fonts/'):
-            font_file = path.split('/')[-1]
-            safe_font_path = self._resolve_safe_path(base_dir, 'assets', 'fonts', font_file)
+            font_file = os.path.basename(path)
+            resolved_font_path = (resolved_base / 'assets' / 'fonts' / font_file).resolve()
+            resolved_fonts_dir = (resolved_base / 'assets' / 'fonts').resolve()
             
-            if safe_font_path is None:
-                self.send_response(403)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Forbidden')
+            # Inline path traversal guard — CodeQL recognizes is_relative_to
+            if not resolved_font_path.is_relative_to(resolved_fonts_dir):
+                self._send_forbidden()
                 return
             
-            print(f"Serving font file: {safe_font_path}")
+            print(f"Serving font file: {resolved_font_path}")
             
             try:
-                # Open in binary mode for font files
-                with open(safe_font_path, 'rb') as f:
-                    file_data = f.read()
+                file_data = resolved_font_path.read_bytes()
                 
                 self.send_response(200)
                 # Set the correct MIME type for TTF fonts
@@ -177,22 +167,19 @@ class MusicHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f'Font file not found: {str(e)}'.encode())
                 
         elif path.startswith('/assets/images/'):
-            image_file = path.split('/')[-1]
-            safe_image_path = self._resolve_safe_path(base_dir, 'assets', 'images', image_file)
+            image_file = os.path.basename(path)
+            resolved_image_path = (resolved_base / 'assets' / 'images' / image_file).resolve()
+            resolved_images_dir = (resolved_base / 'assets' / 'images').resolve()
             
-            if safe_image_path is None:
-                self.send_response(403)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Forbidden')
+            # Inline path traversal guard — CodeQL recognizes is_relative_to
+            if not resolved_image_path.is_relative_to(resolved_images_dir):
+                self._send_forbidden()
                 return
             
-            print(f"Serving image file: {safe_image_path}")
+            print(f"Serving image file: {resolved_image_path}")
             
             try:
-                # Open in binary mode for image files
-                with open(safe_image_path, 'rb') as f:
-                    file_data = f.read()
+                file_data = resolved_image_path.read_bytes()
                 
                 self.send_response(200)
                 # Set content type based on file extension
