@@ -12,10 +12,63 @@ class ServerController:
     def __init__(self, app):
         self.app = app
 
+    @staticmethod
+    def _kill_stale_servers():
+        """Kill any orphaned music_server.py processes from a previous app instance.
+        
+        This handles the case where the old app (e.g. during an auto-update) didn't
+        fully clean up its server subprocess before the new app launched.
+        Called before starting a new server, so no friendly child process exists yet.
+        """
+        import signal
+        killed_any = False
+        try:
+            # Use a specific pattern to avoid matching editors/terminals with the file open
+            result = subprocess.run(
+                ["pgrep", "-f", r"music_server\.py --port"],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
+                
+                # First pass: SIGTERM (allows graceful cleanup of ZMQ, sockets, etc.)
+                for pid in pids:
+                    print(f"Sending SIGTERM to stale server process (PID {pid})")
+                    try:
+                        os.kill(int(pid), signal.SIGTERM)
+                        killed_any = True
+                    except ProcessLookupError:
+                        pass
+                    except Exception as e:
+                        print(f"Could not signal PID {pid}: {e}")
+                
+                if killed_any:
+                    # Give processes time to exit gracefully
+                    time.sleep(2)
+                    
+                    # Second pass: SIGKILL any that survived SIGTERM
+                    for pid in pids:
+                        try:
+                            os.kill(int(pid), 0)  # Check if still alive
+                            print(f"Process {pid} survived SIGTERM, sending SIGKILL")
+                            os.kill(int(pid), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass  # Already exited — good
+                        except Exception:
+                            pass
+                    
+                    # Brief pause for OS to release the port
+                    time.sleep(0.5)
+        except Exception as e:
+            print(f"Stale server cleanup check failed (non-fatal): {e}")
+
     def start_server(self):
         """Start the music server"""
         if not self.app.server_running:
             try:
+                # Kill any orphaned server processes from a previous app instance
+                self._kill_stale_servers()
+                
                 # Find music_server.py using get_resources_dir
                 resources_dir = get_resources_dir()
                 server_path = os.path.join(resources_dir, "music_server.py")
