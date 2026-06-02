@@ -1,6 +1,8 @@
 # jamdeck/server/runner.py
 import os
 import sys
+import time
+import errno
 import socket
 import signal
 import atexit
@@ -58,32 +60,41 @@ def run_server(preferred_port=None):
     MusicHandler.apple_music_provider = apple_music_provider
     MusicHandler.root_dir = get_resources_dir()
 
-    # 1. Try the preferred port first if provided
+    # Initialize ZMQ context once before attempting any port binding
+    if zmq_context is None:
+        zmq_context = zmq.Context()
+        print("ZMQ context initialized")
+
+    # 1. Try the preferred port first if provided (with retries for port release timing)
     if preferred_port:
-        print(f"Attempting to use preferred port: {preferred_port}")
-        try:
-            # Initialize ZMQ context if needed
-            if zmq_context is None:
-                zmq_context = zmq.Context()
-                print("ZMQ context initialized")
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            print(f"Attempting preferred port {preferred_port} (attempt {attempt}/{max_retries})")
+            try:
+                server_address = ('', preferred_port)
+                httpd = HTTPServer(server_address, MusicHandler)
+                actual_port = preferred_port
+                port_found = True
 
-            server_address = ('', preferred_port)
-            httpd = HTTPServer(server_address, MusicHandler)
-            actual_port = preferred_port
-            port_found = True
+                # IMPORTANT: Print the port for the parent process BEFORE other messages
+                print(f"JAMDECK_PORT={actual_port}")
+                sys.stdout.flush()
+                print(f"Successfully bound to preferred port {actual_port}")
+                break  # Success — exit retry loop
 
-            # IMPORTANT: Print the port for the parent process BEFORE other messages
-            print(f"JAMDECK_PORT={actual_port}")
-            sys.stdout.flush()
-            print(f"Successfully bound to preferred port {actual_port}")
-
-        except socket.error as e:
-            if e.errno == socket.errno.EADDRINUSE:
-                print(f"Preferred port {preferred_port} already in use. Falling back to automatic detection.")
-            else:
-                print(f"Error trying preferred port {preferred_port}: {e}")
-        except Exception as e:
-            print(f"Server setup error on preferred port {preferred_port}: {e}")
+            except socket.error as e:
+                if e.errno == errno.EADDRINUSE:
+                    if attempt < max_retries:
+                        print(f"Preferred port {preferred_port} in use, retrying in 1s...")
+                        time.sleep(1)
+                    else:
+                        print(f"Preferred port {preferred_port} still in use after {max_retries} attempts. Falling back to automatic detection.")
+                else:
+                    print(f"Error trying preferred port {preferred_port}: {e}")
+                    break  # Non-retryable error
+            except Exception as e:
+                print(f"Server setup error on preferred port {preferred_port}: {e}")
+                break  # Non-retryable error
 
     # 2. If preferred port failed or wasn't provided, try automatic detection
     if not port_found:
@@ -95,11 +106,6 @@ def run_server(preferred_port=None):
                 continue
 
             try:
-                # Initialize ZMQ context if needed
-                if zmq_context is None:
-                    zmq_context = zmq.Context()
-                    print("ZMQ context initialized")
-
                 server_address = ('', port_to_try)
                 httpd = HTTPServer(server_address, MusicHandler)
                 actual_port = port_to_try
@@ -115,7 +121,7 @@ def run_server(preferred_port=None):
                 break
                 
             except socket.error as e:
-                if e.errno == socket.errno.EADDRINUSE:
+                if e.errno == errno.EADDRINUSE:
                     print(f"Port {port_to_try} is busy, trying next...")
                     continue
                 else:

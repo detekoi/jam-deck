@@ -269,12 +269,6 @@ class UpdateManager:
                 sleep 0.1
             done
             
-            # Kill any lingering Jam Deck server processes that might hold the port
-            pkill -f "music_server.py" 2>/dev/null || true
-            
-            # Brief pause to ensure the port is fully released
-            sleep 1
-            
             # Overwrite the app
             rm -rf "{escaped_dest}"
             cp -R "{escaped_src}" "{escaped_dest}"
