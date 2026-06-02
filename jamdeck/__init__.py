@@ -1,5 +1,5 @@
 # jamdeck/__init__.py
-VERSION = "1.1.6"
+VERSION = "1.2.0"
 
 def get_resources_dir():
     """Locate the project root / Resources directory.
