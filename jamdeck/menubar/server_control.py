@@ -4,13 +4,37 @@ import sys
 import time
 import subprocess
 import threading
+from datetime import datetime
 import rumps
 from jamdeck import get_resources_dir
 from jamdeck.menubar.config import ConfigManager
 
+# Server output is saved here so problems can be diagnosed after the fact
+LOG_DIR = os.path.join(os.path.expanduser("~"), "Library", "Logs", "Jam Deck")
+SERVER_LOG_FILE = os.path.join(LOG_DIR, "server.log")
+PREVIOUS_SERVER_LOG_FILE = os.path.join(LOG_DIR, "server.previous.log")
+# Start a fresh log once the current one reaches this size (the old one is kept as server.previous.log)
+MAX_SERVER_LOG_BYTES = 10 * 1024 * 1024
+
 class ServerController:
     def __init__(self, app):
         self.app = app
+
+    @staticmethod
+    def _open_server_log():
+        """Start a new server log, keeping the last one as server.previous.log.
+        
+        Returns the open file, or None if the log can't be written.
+        """
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            if os.path.exists(SERVER_LOG_FILE):
+                os.replace(SERVER_LOG_FILE, PREVIOUS_SERVER_LOG_FILE)
+            # Line buffered so the log is current even if the app is force quit
+            return open(SERVER_LOG_FILE, "w", encoding="utf-8", buffering=1)
+        except OSError as e:
+            print(f"Could not open server log {SERVER_LOG_FILE}: {e}")
+            return None
 
     @staticmethod
     def _kill_stale_servers():
@@ -153,6 +177,7 @@ class ServerController:
     def monitor_server(self):
         """Monitor server output and handle process exit"""
         process_ref = self.app.server_process
+        log_file = self._open_server_log()
         while process_ref and process_ref.poll() is None:
             try:
                 # Read output line by line
@@ -160,6 +185,17 @@ class ServerController:
                 if output:
                     line = output.strip()
                     print(f"Server: {line}")
+                    
+                    # Save the line to the log file with a timestamp
+                    if log_file:
+                        try:
+                            log_file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
+                            if log_file.tell() > MAX_SERVER_LOG_BYTES:
+                                log_file.close()
+                                log_file = self._open_server_log()
+                        except (OSError, ValueError) as e:
+                            print(f"Stopped writing server log: {e}")
+                            log_file = None
                     
                     # Check for the port line
                     if line.startswith("JAMDECK_PORT="):
@@ -189,6 +225,17 @@ class ServerController:
                     
             except (AttributeError, ValueError):
                 break
+        
+        if log_file:
+            # If the server exited, save its last output (e.g. a crash traceback)
+            try:
+                if process_ref and process_ref.poll() is not None:
+                    for line in process_ref.stdout.read().splitlines():
+                        log_file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line.strip()}\n")
+                    log_file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} Server exited with code {process_ref.returncode}\n")
+            except (OSError, ValueError, AttributeError) as e:
+                print(f"Could not save final server output: {e}")
+            log_file.close()
                 
         # Only send notification if we didn't expect the process to end (i.e., it crashed)
         if self.app.server_running:
@@ -198,12 +245,32 @@ class ServerController:
             rumps.App.notification(
                 title="Jam Deck",
                 subtitle="Server Stopped Unexpectedly", 
-                message="Check log for details.",
+                message="Details are in ~/Library/Logs/Jam Deck/server.log",
                 sound=False
             )
             
             # Update menu state on main thread
             self.app.run_on_main_thread(self.app.update_menu_state)
+
+    def open_server_log(self):
+        """Open the server log in the default viewer (Console)."""
+        if not os.path.exists(SERVER_LOG_FILE):
+            rumps.notification(
+                title="Jam Deck",
+                subtitle="No Server Log Yet",
+                message="The log is created when the server starts.",
+                sound=False
+            )
+            return
+        try:
+            subprocess.run(["open", SERVER_LOG_FILE])
+        except Exception as e:
+            rumps.notification(
+                title="Jam Deck",
+                subtitle="Error",
+                message=f"Could not open server log: {str(e)}",
+                sound=False
+            )
 
     def set_server_port(self, _):
         """Show dialog to set the preferred server port."""

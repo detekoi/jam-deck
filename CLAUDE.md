@@ -42,4 +42,5 @@
 ## Troubleshooting
 - Check `debugMode` in overlay.html (set to true for visible errors)
 - Look for error logs in Terminal
+- Menu bar app saves server output to `~/Library/Logs/Jam Deck/server.log` (previous run in `server.previous.log`); also available via "Open Server Log" in the menu
 - System Preferences → Security & Privacy → Automation permissions

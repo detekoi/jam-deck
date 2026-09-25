@@ -69,6 +69,7 @@ class JamDeckApp(rumps.App):
         self.server_url_display = rumps.MenuItem(f"Server URL: http://localhost:{self.actual_port}", callback=None)
         self.server_url_display.set_callback(None) # Make it non-clickable initially
         open_browser_item = rumps.MenuItem("Open in Browser", callback=self.open_browser)
+        open_log_item = rumps.MenuItem("Open Server Log", callback=self.open_server_log)
         docs_item = rumps.MenuItem("Documentation", callback=self.open_documentation)
         self.update_menu_item = rumps.MenuItem("Check for Updates", callback=self.on_check_for_updates)
         about_item = rumps.MenuItem("About", callback=self.show_about)
@@ -91,6 +92,7 @@ class JamDeckApp(rumps.App):
             self.manage_scenes_menu,
             None,  # Separator
             open_browser_item,
+            open_log_item,
             None,  # Separator
             docs_item,
             self.update_menu_item,
@@ -147,6 +149,10 @@ class JamDeckApp(rumps.App):
     def set_server_port(self, sender):
         """Delegate port setting to controller"""
         self.server_controller.set_server_port(sender)
+
+    def open_server_log(self, _):
+        """Delegate opening the server log to controller"""
+        self.server_controller.open_server_log()
 
     def on_check_for_updates(self, sender):
         """Delegate update check to manager"""
