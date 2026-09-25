@@ -40,10 +40,13 @@ Jam Deck is a now-playing display for Apple Music on macOS. You can change its t
 
 ### Recommended: Menu Bar App
 
-1. Download the latest Jam Deck.app from the [Releases](https://github.com/detekoi/jam-deck/releases/) page.
-2. Move Jam Deck.app to your Applications folder.
-3. Open Jam Deck from your Applications folder.
-   - If macOS shows a warning about an app from an unidentified developer, read [Apple's guide to opening apps from unknown developers](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+1. Download `JamDeck.dmg` from the latest release on the [Releases](https://github.com/detekoi/jam-deck/releases/) page.
+2. Open `JamDeck.dmg`.
+3. In the window that opens, drag Jam Deck to the Applications folder.
+4. Eject the Jam Deck disk image.
+5. Open Jam Deck from your Applications folder.
+6. If macOS asks if you are sure that you want to open an app from the internet, click "Open".
+7. If macOS asks for permission to control Music, click "OK". Jam Deck needs this permission to read the track that plays now.
 
 When Jam Deck opens, it shows a musical note icon in your menu bar. The server starts automatically.
 
