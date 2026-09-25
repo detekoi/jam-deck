@@ -41,8 +41,12 @@ class AppleMusicProvider:
                         end try
                         set hasArtwork to true
                     on error errMsg
-                        -- Log error but continue
-                        do shell script "echo 'Artwork error: " & errMsg & "' >> /tmp/harmony-deck-log.txt"
+                        -- Log error but continue. quoted form of keeps apostrophes in the
+                        -- message from breaking the shell command, and the inner try keeps
+                        -- a logging failure from hiding the track info.
+                        try
+                            do shell script "echo " & quoted form of ("Artwork error: " & errMsg) & " >> /tmp/harmony-deck-log.txt"
+                        end try
                     end try
                     
                     -- Return delimited string: playing_state|||title|||artist|||album|||has_artwork
@@ -102,6 +106,7 @@ class AppleMusicProvider:
                         artwork_id = self.artwork_manager.accept_applescript_artwork(artist, title, album)
                     if not artwork_id:
                         artwork_id = self.artwork_manager.fetch_itunes_artwork(artist, title, album)
+                    self.artwork_manager.remember_track_artwork(artist, title, album, artwork_id)
 
                     # The id is a hash of the image bytes, so the URL only ever serves
                     # this exact image and changes whenever the artwork changes.

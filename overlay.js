@@ -480,8 +480,10 @@
                                     newImg.onerror = function() {
                                         if (pendingArtworkPath !== artworkPath) return;
                                         if (debugMode) console.log(`[Main] Artwork failed to load: ${artworkPath}`);
-                                        // Let the same path be tried again if the server sends it later
+                                        // Retry on the next poll. Clearing the saved path makes that
+                                        // poll's data differ from previousState, so the update runs.
                                         pendingArtworkPath = null;
+                                        if (previousState) previousState.artworkPath = null;
                                         showNoteIcon();
                                     };
                                     newImg.src = artworkPath;
