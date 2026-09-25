@@ -117,6 +117,12 @@
             }
         });
         
+        // Get saved edge fade setting (off by default)
+        const fadeToggle = document.getElementById('fadeToggle');
+        const savedTextFade = getSceneStorage('musicPlayerTextFade', 'off');
+        container.classList.toggle('text-fade', savedTextFade === 'on');
+        fadeToggle.classList.toggle('active', savedTextFade === 'on');
+        
         // Add click handlers for theme buttons
         themeButtons.forEach(btn => {
             btn.addEventListener('click', () => {
@@ -168,6 +174,20 @@
                 });
             });
         });
+        
+        // Add click handler for edge fade toggle
+        fadeToggle.addEventListener('click', () => {
+            const fadeOn = container.classList.toggle('text-fade');
+            fadeToggle.classList.toggle('active', fadeOn);
+            
+            // Save selection with scene context
+            setSceneStorage('musicPlayerTextFade', fadeOn ? 'on' : 'off');
+            
+            // Re-check scrolling, since the fade changes where scrolling text stops
+            // (_checkNeedsScroll waits a frame before measuring)
+            songTitleMarquee._checkNeedsScroll();
+            songArtistMarquee._checkNeedsScroll();
+        });
 
         // --- New Marquee Controller Logic ---
         class MarqueeController {
@@ -182,8 +202,20 @@
             }
 
             _measureWidths() {
-                // Get the container width
-                const containerWidth = this.container.clientWidth;
+                // Get the width available for text: the container's content box.
+                // Its padding is only room for text shadows and the edge fade.
+                const containerStyle = window.getComputedStyle(this.container);
+                const paddingLeft = parseFloat(containerStyle.paddingLeft) || 0;
+                const paddingRight = parseFloat(containerStyle.paddingRight) || 0;
+                const containerWidth = this.container.clientWidth - paddingLeft - paddingRight;
+                
+                // With the edge fade on, the right fade reaches into the text area.
+                // Scrolling text should stop before it so the last letters stay sharp.
+                let fadeInset = 0;
+                if (this.container.closest('.overlay-container').classList.contains('text-fade')) {
+                    const fadeRight = parseFloat(containerStyle.getPropertyValue('--fade-right')) || 0;
+                    fadeInset = Math.max(0, fadeRight - paddingRight);
+                }
                 
                 // Create a temporary span for accurate text measurement
                 const tempSpan = document.createElement('span');
@@ -211,15 +243,17 @@
                     console.log(`[${this.innerElement.id}] Text: "${this.originalText}", Width: ${textWidth}px, Container: ${containerWidth}px`);
                 }
                 
-                return { textWidth, containerWidth };
+                return { textWidth, containerWidth, fadeInset };
             }
 
             _checkNeedsScroll() { // Removed triggerInitialScroll parameter
                 // Clear any pending animation frame requests for measurement
                 cancelAnimationFrame(this.animationFrameRequest);
                 
-                // Reset visual state before measurement
+                // Reset visual state before measurement. Removing both classes restarts
+                // the text scroll and edge fade animations together when re-added.
                 this.innerElement.classList.remove('scrolling-active'); // Remove class if present
+                this.container.classList.remove('is-overflowing');
                 // The line setting style.animation = 'none' was removed as it conflicts with the class-based animation.
                 this.innerElement.style.transform = 'translateX(0)'; // Ensure reset
                 
@@ -229,10 +263,12 @@
                 // Use rAF to ensure DOM is updated before measuring
                 this.animationFrameRequest = requestAnimationFrame(() => {
                     // Perform measurement using the clean original text state
-                    const { textWidth, containerWidth } = this._measureWidths();
+                    const { textWidth, containerWidth, fadeInset } = this._measureWidths();
                     // Add a tolerance (e.g., 1 pixel) to prevent scrolling for tiny overflows
                     const scrollTolerance = 1; 
                     this.needsScroll = textWidth > (containerWidth + scrollTolerance);
+                    // Lines that scroll get the edge fade (when that option is on)
+                    this.container.classList.toggle('is-overflowing', this.needsScroll);
 
                     // Now, update inner span's text content and apply/remove class based on whether scroll is needed
                     if (this.needsScroll) {
@@ -240,8 +276,9 @@
                         
                         // Calculate the EXACT distance needed to show the full text
                         // If text is 400px and container is 200px, we need to scroll -200px
-                        // Add 5px buffer to ensure the last character is fully visible
-                        const scrollDistance = -(textWidth - containerWidth + 5);
+                        // Add 5px buffer to ensure the last character is fully visible,
+                        // and stop before the right edge fade if it's on
+                        const scrollDistance = -(textWidth - containerWidth + fadeInset + 5);
                         
                         // --- New Duration Calculation for Consistent Speed ---
                         let calculatedDuration = 23; // Default duration if no scroll needed or minimal overflow
@@ -250,7 +287,9 @@
                         const scrollSpeed = 50; // Target pixels per second during scroll phase
 
                         if (textWidth > containerWidth) {
-                            const scrollAmount = textWidth - containerWidth;
+                            // Use the distance the text actually travels, which includes
+                            // the buffer and the edge fade inset, to keep the speed consistent
+                            const scrollAmount = Math.abs(scrollDistance);
                             
                             // Calculate time needed for one-way scroll at target speed
                             const oneWayScrollTime = scrollAmount / scrollSpeed;
@@ -275,11 +314,12 @@
 
                         // Set custom property for animation duration with error checking
                         try {
-                            // Use the newly calculated duration
-                            this.innerElement.style.setProperty('--scroll-duration', `${calculatedDuration}s`);
+                            // Use the newly calculated duration. Set on the container so both the
+                            // text scroll and the edge fade animation (on the container) use it.
+                            this.container.style.setProperty('--scroll-duration', `${calculatedDuration}s`);
 
                             // Set the custom property for scroll distance (still needed by keyframes)
-                            this.innerElement.style.setProperty('--scroll-distance', `${scrollDistance}px`);
+                            this.container.style.setProperty('--scroll-distance', `${scrollDistance}px`);
                             
                             // Debug check if custom properties are supported
                             if (debugMode) {
@@ -312,6 +352,9 @@
                         this.innerElement.textContent = this.originalText;
                         // Ensure animation class is removed
                         this.innerElement.classList.remove('scrolling-active');
+                        // Clear values left over from when this line last scrolled
+                        this.container.style.removeProperty('--scroll-distance');
+                        this.container.style.removeProperty('--scroll-duration');
                     }
                 });
             }
@@ -343,11 +386,12 @@
                 
                 // Reset visual state by removing animation class
                 this.innerElement.classList.remove('scrolling-active');
+                this.container.classList.remove('is-overflowing');
                 // Ensure transform is reset (base style should handle this)
                 this.innerElement.style.transform = 'translateX(0)'; 
                 // Remove custom properties
-                this.innerElement.style.removeProperty('--scroll-distance');
-                this.innerElement.style.removeProperty('--scroll-duration');
+                this.container.style.removeProperty('--scroll-distance');
+                this.container.style.removeProperty('--scroll-duration');
                 
                 // Reset text content on inner span to the base original text
                 this.innerElement.textContent = this.originalText; 

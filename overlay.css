@@ -100,7 +100,9 @@ body {
 
 .song-info {
     font-size: 18px;
-    overflow: hidden;
+    /* Let the text column shrink in the flex row without clipping text shadows.
+       Each .scroll-container does its own clipping. */
+    min-width: 0;
     transition: all 0.3s ease;
 }
 
@@ -108,15 +110,11 @@ body {
     font-weight: 700;
     margin-bottom: 4px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .song-artist {
     font-size: 14px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* Theme selector (hidden by default) */
@@ -189,9 +187,16 @@ body {
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
 }
 
-.width-toggle {
+.width-toggle,
+.fade-toggle {
     font-size: 10px;
     color: white;
+}
+
+.fade-toggle {
+    /* Icon: white fading to transparent at both sides */
+    background-image: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9) 35%, rgba(255, 255, 255, 0.9) 65%, transparent);
+    background-color: #444;
 }
 
 /* Animation keyframes */
@@ -213,9 +218,54 @@ body {
 }
 
 .scroll-container {
-    width: 100%;
+    /* Room around the text for text shadows and glows, so they aren't cut off
+       where the container clips. The negative margins cancel the extra room
+       out, keeping the text in the same place. The marquee measures only the
+       content box, so text itself never scrolls into this room at rest. */
+    --edge-room-x: 8px;
+    --edge-room-y: 6px;
     overflow: hidden;
-    padding: 2px 6px 2px 0; /* Right/top/bottom padding prevents text-shadow clipping */
+    padding: var(--edge-room-y) var(--edge-room-x);
+    margin: calc(2px - var(--edge-room-y)) calc(-1 * var(--edge-room-x));
+}
+
+/* Edge fade option: long, scrolling lines fade out at the edges
+   instead of being cropped sharply */
+
+/* Registered so it can animate smoothly inside the mask gradient */
+@property --fade-left-extra {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+
+.text-fade .scroll-container {
+    --fade-right: 32px; /* Extends into the text area; the marquee stops the text before it */
+}
+
+.text-fade .scroll-container.is-overflowing {
+    /* The left fade covers only the edge room at rest, so the start of the text
+       isn't faded, and widens into the text area while the text is scrolled */
+    -webkit-mask-image: linear-gradient(to right,
+        transparent 0, #000 calc(var(--edge-room-x) + var(--fade-left-extra, 0px)),
+        #000 calc(100% - var(--fade-right)), transparent 100%);
+    mask-image: linear-gradient(to right,
+        transparent 0, #000 calc(var(--edge-room-x) + var(--fade-left-extra, 0px)),
+        #000 calc(100% - var(--fade-right)), transparent 100%);
+    /* Same duration and delay as scrollText, so the two stay in step */
+    animation: fadeLeftEdge var(--scroll-duration, 23s) linear 2s infinite;
+}
+
+/* Timed to match scrollText: widen as the text leaves its start position,
+   narrow again as it returns. scrollText eases in and out, so the fade eases
+   in as the text starts moving and eases out as it comes to rest, keeping
+   the fade from covering letters that haven't moved yet. */
+@keyframes fadeLeftEdge {
+    0%        { --fade-left-extra: 0px; }
+    15%       { --fade-left-extra: 0px; animation-timing-function: ease-in; }
+    19%       { --fade-left-extra: 24px; }
+    46%       { --fade-left-extra: 24px; animation-timing-function: ease-out; }
+    50%, 100% { --fade-left-extra: 0px; }
 }
 
 .scroll-text {
