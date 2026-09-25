@@ -218,8 +218,8 @@ class UpdateManager:
                         try:
                             server_proc.kill()
                             server_proc.wait(timeout=2)
-                        except Exception:
-                            pass
+                        except (subprocess.TimeoutExpired, OSError) as e:
+                            print(f"Could not kill server process: {e}")
                 
                 # 4. Spawn background script to overwrite and relaunch
                 self._run_updater_script(dmg_path, mount_point, src_app_path, dest_app_path, is_bundled)

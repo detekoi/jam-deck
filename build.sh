@@ -8,7 +8,7 @@ set -e
 osascript -e 'quit app "Jam Deck"'
 
 # Kill any lingering server subprocesses that might hold the port
-pkill -f "music_server.py" 2>/dev/null || true
+pkill -f "music_server\.py --port" 2>/dev/null || true
 sleep 1
 
 # Remove previous build directories

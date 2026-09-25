@@ -168,9 +168,14 @@ class ServerController:
                 # Update state first to prevent monitor_server from triggering crash notification
                 self.app.server_running = False
                 self.app.server_process = None
-                self.app.actual_port = self.app.preferred_port 
-                self.app.update_menu_state()
-                
+                self.app.actual_port = self.app.preferred_port
+                # Menu items can only be changed on the main thread, and the updater
+                # calls this from a background thread
+                if threading.current_thread() is threading.main_thread():
+                    self.app.update_menu_state()
+                else:
+                    self.app.run_on_main_thread(self.app.update_menu_state)
+
                 # Terminate the server process and wait for it to exit, so its port
                 # is free and it isn't mistaken for a stale server on restart
                 if process_to_terminate:
