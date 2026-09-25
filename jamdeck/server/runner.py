@@ -5,8 +5,6 @@ import time
 import errno
 import socket
 import signal
-import atexit
-import zmq
 from http.server import HTTPServer
 
 from jamdeck import get_resources_dir
@@ -18,27 +16,9 @@ from jamdeck.server.handler import MusicHandler
 START_PORT = 8080
 MAX_PORT_ATTEMPTS = 10 # Limit how many ports we try
 
-# Initialize ZMQ context as None
-zmq_context = None
-
-def cleanup():
-    global zmq_context
-    if zmq_context:
-        print("Closing ZMQ context...")
-        try:
-            zmq_context.term()
-        except Exception as e:
-            print(f"Error closing ZMQ context: {e}")
-        zmq_context = None
-        print("ZMQ context closed")
-
-# Register cleanup function to run on exit
-atexit.register(cleanup)
-
 # Handle signals for clean shutdown
 def signal_handler(sig, frame):
     print("\nShutting down server...")
-    cleanup()
     sys.exit(0)
 
 # Register signal handlers
@@ -46,7 +26,6 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 def run_server(preferred_port=None):
-    global zmq_context
     httpd = None
     actual_port = -1
     port_found = False
@@ -59,11 +38,6 @@ def run_server(preferred_port=None):
     MusicHandler.artwork_manager = artwork_manager
     MusicHandler.apple_music_provider = apple_music_provider
     MusicHandler.root_dir = get_resources_dir()
-
-    # Initialize ZMQ context once before attempting any port binding
-    if zmq_context is None:
-        zmq_context = zmq.Context()
-        print("ZMQ context initialized")
 
     # 1. Try the preferred port first if provided (with retries for port release timing)
     if preferred_port:
@@ -126,11 +100,9 @@ def run_server(preferred_port=None):
                     continue
                 else:
                     print(f"Server error on port {port_to_try}: {e}")
-                    cleanup()
                     return
             except Exception as e:
                 print(f"Server setup error on port {port_to_try}: {e}")
-                cleanup()
                 return
 
     # Check if a port was successfully found either way
@@ -138,7 +110,6 @@ def run_server(preferred_port=None):
         error_message = f"Could not bind to the preferred port ({preferred_port}) " if preferred_port else ""
         error_message += f"or find an available port in the range {START_PORT}-{START_PORT + MAX_PORT_ATTEMPTS - 1}."
         print(error_message)
-        cleanup()
         return
 
     try:
@@ -155,10 +126,8 @@ def run_server(preferred_port=None):
         print("\nShutting down server...")
         if httpd:
             httpd.server_close()
-        cleanup()
         print("Server stopped")
     except Exception as e:
         print(f"Server runtime error: {e}")
         if httpd:
             httpd.server_close()
-        cleanup()

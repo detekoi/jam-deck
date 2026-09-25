@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import signal
 import subprocess
 import threading
 from datetime import datetime
@@ -44,47 +45,75 @@ class ServerController:
         fully clean up its server subprocess before the new app launched.
         Called before starting a new server, so no friendly child process exists yet.
         """
-        import signal
-        killed_any = False
         try:
             # Use a specific pattern to avoid matching editors/terminals with the file open
             result = subprocess.run(
                 ["pgrep", "-f", r"music_server\.py --port"],
                 capture_output=True, text=True, timeout=3
             )
-            if result.returncode == 0 and result.stdout.strip():
-                pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
-                
-                # First pass: SIGTERM (allows graceful cleanup of ZMQ, sockets, etc.)
-                for pid in pids:
-                    print(f"Sending SIGTERM to stale server process (PID {pid})")
-                    try:
-                        os.kill(int(pid), signal.SIGTERM)
-                        killed_any = True
-                    except ProcessLookupError:
-                        pass
-                    except Exception as e:
-                        print(f"Could not signal PID {pid}: {e}")
-                
-                if killed_any:
-                    # Give processes time to exit gracefully
-                    time.sleep(2)
-                    
-                    # Second pass: SIGKILL any that survived SIGTERM
-                    for pid in pids:
-                        try:
-                            os.kill(int(pid), 0)  # Check if still alive
-                            print(f"Process {pid} survived SIGTERM, sending SIGKILL")
-                            os.kill(int(pid), signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass  # Already exited — good
-                        except Exception:
-                            pass
-                    
-                    # Brief pause for OS to release the port
-                    time.sleep(0.5)
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             print(f"Stale server cleanup check failed (non-fatal): {e}")
+            return
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        
+        pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+        
+        # First pass: SIGTERM (allows graceful cleanup of sockets, etc.)
+        signaled = []
+        for pid in pids:
+            print(f"Sending SIGTERM to stale server process (PID {pid})")
+            try:
+                os.kill(pid, signal.SIGTERM)
+                signaled.append(pid)
+            except ProcessLookupError:
+                pass  # Already exited
+            except PermissionError as e:
+                print(f"Could not signal PID {pid}: {e}")
+        
+        # Wait only as long as needed, since this can run on the main (UI) thread
+        remaining = ServerController._wait_for_exit(signaled, timeout=1.5)
+        
+        # Second pass: SIGKILL any that survived SIGTERM
+        for pid in remaining:
+            print(f"Process {pid} survived SIGTERM, sending SIGKILL")
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        ServerController._wait_for_exit(remaining, timeout=0.5)
+
+    @staticmethod
+    def _wait_for_exit(pids, timeout):
+        """Poll until the given processes exit or the timeout passes.
+        
+        Returns the PIDs that are still running.
+        """
+        deadline = time.monotonic() + timeout
+        alive = list(pids)
+        while alive:
+            still_alive = []
+            for pid in alive:
+                try:
+                    # If it's our own child, reap it. An exited but unreaped (zombie)
+                    # process would otherwise still pass the kill(pid, 0) check below.
+                    reaped_pid, _ = os.waitpid(pid, os.WNOHANG)
+                    if reaped_pid == pid:
+                        continue
+                except ChildProcessError:
+                    pass  # Not our child; its parent (usually launchd) reaps it
+                try:
+                    os.kill(pid, 0)  # Signal 0 only checks whether the process exists
+                    still_alive.append(pid)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    still_alive.append(pid)  # Exists but owned by someone else
+            alive = still_alive
+            if not alive or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        return alive
 
     def start_server(self):
         """Start the music server"""
@@ -111,25 +140,16 @@ class ServerController:
                     encoding='utf-8'
                 )
                 
-                # Monitor the server output in a separate thread
-                self.app.server_thread = threading.Thread(target=self.monitor_server)
-                self.app.server_thread.daemon = True
-                self.app.server_thread.start()
-                
-                # Give server a moment to start
-                time.sleep(1)
-                
-                # Update state
+                # Mark as running before the monitor starts, so a server that exits
+                # right away is reported as an unexpected stop
                 self.app.server_running = True
                 self.app.update_menu_state()
                 
-                # Notify user
-                rumps.notification(
-                    title="Jam Deck",
-                    subtitle="Server Started", 
-                    message="Now playing overlay is active!",
-                    sound=False
-                )
+                # Monitor the server output in a separate thread. It sends the
+                # "Server Started" notification once the server reports its port.
+                self.app.server_thread = threading.Thread(target=self.monitor_server)
+                self.app.server_thread.daemon = True
+                self.app.server_thread.start()
             except Exception as e:
                 rumps.notification(
                     title="Jam Deck",
@@ -151,13 +171,21 @@ class ServerController:
                 self.app.actual_port = self.app.preferred_port 
                 self.app.update_menu_state()
                 
-                # Terminate the server process
+                # Terminate the server process and wait for it to exit, so its port
+                # is free and it isn't mistaken for a stale server on restart
                 if process_to_terminate:
                     try:
                         process_to_terminate.terminate()
-                    except Exception:
-                        # Process might have already exited
-                        pass
+                        process_to_terminate.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        print("Server did not exit after SIGTERM, killing it.")
+                        process_to_terminate.kill()
+                        try:
+                            process_to_terminate.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            print("Server process still hasn't exited after SIGKILL.")
+                    except ProcessLookupError:
+                        pass  # Already exited
                 
                 # Notify user
                 rumps.notification(
@@ -206,7 +234,8 @@ class ServerController:
                             # Update UI on main thread
                             self.app.run_on_main_thread(self.app.update_menu_state)
                             
-                            # Warn the user if we fell back to a different port
+                            # Announce the server now that it's actually listening,
+                            # warning the user if it fell back to a different port
                             if self.app.actual_port != self.app.preferred_port:
                                 fallback_port = self.app.actual_port
                                 pref_port = self.app.preferred_port
@@ -214,6 +243,13 @@ class ServerController:
                                     title="Jam Deck",
                                     subtitle=f"Port {pref_port} was unavailable",
                                     message=f"Server started on port {fallback_port} instead. Another process may be using port {pref_port}.",
+                                    sound=False
+                                ))
+                            else:
+                                self.app.run_on_main_thread(lambda: rumps.notification(
+                                    title="Jam Deck",
+                                    subtitle="Server Started",
+                                    message="Now playing overlay is active!",
                                     sound=False
                                 ))
                         except (IndexError, ValueError) as e:
@@ -237,8 +273,9 @@ class ServerController:
                 print(f"Could not save final server output: {e}")
             log_file.close()
                 
-        # Only send notification if we didn't expect the process to end (i.e., it crashed)
-        if self.app.server_running:
+        # Only send notification if we didn't expect the process to end (i.e., it crashed).
+        # Checking the process too keeps a restarted server from being reported as stopped.
+        if self.app.server_running and self.app.server_process is process_ref:
             self.app.server_running = False
             self.app.actual_port = self.app.preferred_port
             
@@ -309,7 +346,6 @@ class ServerController:
                             sound=False
                         )
                         self.stop_server()
-                        time.sleep(0.5)
                         self.start_server()
                     else:
                         print("Port changed while server stopped.")

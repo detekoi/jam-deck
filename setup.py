@@ -24,7 +24,7 @@ DATA_FILES = [
 ]
 OPTIONS = {
     'argv_emulation': True,
-    'packages': ['jamdeck', 'zmq', 'ctypes', 'rumps'],  # Explicitly include required packages
+    'packages': ['jamdeck', 'ctypes', 'rumps'],  # Explicitly include required packages
     'includes': ['_ctypes'],  # Include _ctypes module
     'frameworks': ['/opt/homebrew/Cellar/libffi/3.4.7/lib/libffi.8.dylib'],  # Include libffi as a framework
     'dylib_excludes': ['libffi.dylib'],  # Exclude any old libffi versions
@@ -40,7 +40,6 @@ OPTIONS = {
         'LSBackgroundOnly': False,  # Allows menu bar icon
     },
     'iconfile': 'assets/images/jamdeck.icns',
-    'extra_scripts': ['collect_zmq.py'],
 }
 
 setup(

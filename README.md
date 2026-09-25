@@ -272,7 +272,6 @@ If you want to build the Jam Deck menu bar app from source:
 
 - `build.sh`: Automated build script that handles closing any running instances, cleaning previous builds, building the app, and creating a DMG installer.
 - `setup.py`: Main build configuration for py2app.
-- `collect_zmq.py`: Helper script to ensure ZeroMQ libraries are properly included in the build.
 
 ### Script Permissions
 

@@ -8,7 +8,6 @@
   - `server/` - HTTP server routing, static asset serving, Apple Music tracking, artwork fetching
 - `overlay.html` / `overlay.js` / `overlay.css` - HTML/CSS/JS for the OBS browser source overlay
 - `setup.py` - Build configuration for py2app
-- `collect_zmq.py` - Helper for ZeroMQ libraries bundling
 - Browser source URL: http://localhost:8080/
 
 ## Commands
