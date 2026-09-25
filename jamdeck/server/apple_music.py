@@ -1,12 +1,10 @@
 # jamdeck/server/apple_music.py
-import os
 import json
 import subprocess
 
 class AppleMusicProvider:
-    def __init__(self, artwork_manager, artwork_path="/tmp/harmony_deck_cover.jpg"):
+    def __init__(self, artwork_manager):
         self.artwork_manager = artwork_manager
-        self.artwork_path = artwork_path
 
     def get_apple_music_track(self):
         # Define a unique delimiter unlikely to be in metadata
@@ -15,6 +13,7 @@ class AppleMusicProvider:
         # AppleScript to return delimited data instead of JSON
         script = f'''
         set output_delimiter to "{delimiter}"
+        set artworkFile to "{self.artwork_manager.applescript_artwork_path}"
 
         if application "Music" is running then
             tell application "Music"
@@ -29,13 +28,16 @@ class AppleMusicProvider:
                     set hasArtwork to false
                     try
                         set myArtwork to artwork 1 of currentTrack
-                        set artworkFile to "/tmp/harmony_deck_cover.jpg"
                         set myPicture to data of myArtwork
                         set myFile to (open for access (POSIX file artworkFile) with write permission)
-                        set eof of myFile to 0
-                        write myPicture to myFile
                         try
-                            close access (POSIX file artworkFile)
+                            set eof of myFile to 0
+                            write myPicture to myFile
+                            close access myFile
+                        on error writeErr
+                            -- Always release the file, or later polls can't open it
+                            close access myFile
+                            error writeErr
                         end try
                         set hasArtwork to true
                     on error errMsg
@@ -84,7 +86,6 @@ class AppleMusicProvider:
                 if len(parts) == 5:
                     title, artist, album, has_artwork_str = parts[1], parts[2], parts[3], parts[4]
                     has_artwork = has_artwork_str.lower() == 'true'
-                    track_id = f"{artist}|||{title}"
 
                     # Build the data dictionary
                     data = {
@@ -94,29 +95,18 @@ class AppleMusicProvider:
                         "album": album
                     }
 
-                    # If AppleScript successfully wrote artwork, update the on-disk track record.
-                    # This ensures we know whose art is currently in the temp file.
+                    # Use the Music app's artwork if it's a valid image that belongs to this
+                    # track. Otherwise fall back to the iTunes Search API.
+                    artwork_id = None
                     if has_artwork:
-                        self.artwork_manager.last_artwork_track = track_id
+                        artwork_id = self.artwork_manager.accept_applescript_artwork(artist, title, album)
+                    if not artwork_id:
+                        artwork_id = self.artwork_manager.fetch_itunes_artwork(artist, title, album)
 
-                    # Add artwork path if available (from AppleScript or iTunes fallback)
-                    if not has_artwork:
-                        # Try iTunes Search API as fallback
-                        has_artwork = self.artwork_manager.fetch_itunes_artwork(artist, title, album)
-                    
-                    if has_artwork:
-                        # Only serve the artwork file if it belongs to the current track.
-                        # If a different song's art is on disk (e.g. from a queued track),
-                        # we skip the artwork rather than show the wrong album art.
-                        if self.artwork_manager.last_artwork_track == track_id:
-                            # Generate timestamp for cache busting
-                            try:
-                                timestamp = int(os.path.getmtime(self.artwork_path))
-                                data["artworkPath"] = f"/artwork?t={timestamp}"
-                            except FileNotFoundError:
-                                print("Warning: Artwork file not found for timestamp, skipping artwork path.")
-                        else:
-                            print(f"Artwork on disk belongs to '{self.artwork_manager.last_artwork_track}', not current track '{track_id}'. Skipping stale art.")
+                    # The id is a hash of the image bytes, so the URL only ever serves
+                    # this exact image and changes whenever the artwork changes.
+                    if artwork_id:
+                        data["artworkPath"] = f"/artwork?id={artwork_id}"
 
                     return json.dumps(data)
                 else:
@@ -147,5 +137,5 @@ class AppleMusicProvider:
             print("Error: AppleScript timed out after 5 seconds")
             return json.dumps({"playing": False, "error": "AppleScript timed out"})
         except Exception as e:
-            print(f"Error processing AppleScript output or getting artwork timestamp: {e}")
+            print(f"Error processing AppleScript output or artwork: {e}")
             return json.dumps({"playing": False, "error": f"Python processing error: {str(e)}"})

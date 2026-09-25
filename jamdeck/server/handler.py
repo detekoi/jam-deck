@@ -2,7 +2,7 @@
 import os
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 class MusicHandler(BaseHTTPRequestHandler):
     # Class variables to be configured before starting the server
@@ -111,25 +111,24 @@ class MusicHandler(BaseHTTPRequestHandler):
             # Always ensure we send valid JSON
             self.wfile.write(music_data.encode())
             
-        elif path == '/artwork' or path.startswith('/artwork?'):
-            # Fixed path to the artwork file
-            artwork_path = self.artwork_manager.artwork_path if self.artwork_manager else "/tmp/harmony_deck_cover.jpg"
-            print(f"Serving artwork from: {artwork_path}")
+        elif path == '/artwork':
+            # Artwork is served from memory by id (a hash of the image bytes),
+            # so each URL always returns the same image
+            artwork_id = parse_qs(parsed_path.query).get('id', [None])[0]
+            artwork = self.artwork_manager.get_artwork(artwork_id) if self.artwork_manager and artwork_id else None
             
-            try:
-                # Read the file
-                with open(artwork_path, 'rb') as f:
-                    file_data = f.read()
-                
+            if artwork:
+                file_data, content_type = artwork
                 self.send_response(200)
-                self.send_header('Content-type', 'image/jpeg')
-                self.send_header('Cache-Control', 'no-cache')  # Prevent caching
+                self.send_header('Content-type', content_type)
+                self.send_header('Content-Length', str(len(file_data)))
+                # Safe to cache: a given id never changes content
+                self.send_header('Cache-Control', 'max-age=86400')
                 self.end_headers()
                 self.wfile.write(file_data)
-                print("Artwork served successfully")
-                
-            except Exception as e:
-                print(f"Error serving artwork: {e}")
+                print(f"Artwork {artwork_id} served successfully")
+            else:
+                print(f"Artwork not found: {artwork_id}")
                 self.send_response(404)
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()

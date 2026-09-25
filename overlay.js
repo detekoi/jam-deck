@@ -9,6 +9,7 @@
         
         // Keep track of previous state
         let previousState = null;
+        let pendingArtworkPath = null; // Artwork URL we're currently waiting to display
         let containerVisible = true;
         let errorCount = 0;
         
@@ -456,31 +457,39 @@
                             
                             // Update artwork
                             const artworkContainer = document.getElementById('artworkContainer');
-                            const songChanged = !previousState || previousState.title !== data.title;
+                            const showNoteIcon = function() {
+                                artworkContainer.innerHTML = '♪';
+                                artworkContainer.className = 'note-icon';
+                            };
                             
                             if (data.artworkPath) {
-                                // Update artwork if the path changed OR if the song changed.
-                                // Checking song title as well guards against cases where a
-                                // queued track's art temporarily lands on disk with the same
-                                // mtime-based URL, which would otherwise get stuck showing
-                                // the wrong album art for the current track.
-                                if (songChanged || previousState.artworkPath !== data.artworkPath) {
+                                // The server's artwork URL is unique per image, so a new
+                                // path means new artwork
+                                if (data.artworkPath !== pendingArtworkPath) {
+                                    const artworkPath = data.artworkPath;
+                                    pendingArtworkPath = artworkPath;
+
                                     // Preload the new image first
                                     const newImg = new Image();
                                     newImg.onload = function() {
-                                        artworkContainer.innerHTML = `<img src="${data.artworkPath}" alt="Album art">`;
+                                        // Ignore loads that finish after newer artwork was requested
+                                        if (pendingArtworkPath !== artworkPath) return;
+                                        artworkContainer.innerHTML = `<img src="${artworkPath}" alt="Album art">`;
                                         artworkContainer.className = 'album-art';
                                     };
-                                    // Force a cache-busting reload when the song changes so the
-                                    // browser doesn't serve a cached copy of the old artwork.
-                                    newImg.src = songChanged
-                                        ? data.artworkPath + '&song=' + encodeURIComponent(data.title)
-                                        : data.artworkPath;
+                                    newImg.onerror = function() {
+                                        if (pendingArtworkPath !== artworkPath) return;
+                                        if (debugMode) console.log(`[Main] Artwork failed to load: ${artworkPath}`);
+                                        // Let the same path be tried again if the server sends it later
+                                        pendingArtworkPath = null;
+                                        showNoteIcon();
+                                    };
+                                    newImg.src = artworkPath;
                                 }
                             } else {
                                 // No artwork, show music note
-                                artworkContainer.innerHTML = '♪';
-                                artworkContainer.className = 'note-icon';
+                                pendingArtworkPath = null;
+                                showNoteIcon();
                             }
                             
                             
